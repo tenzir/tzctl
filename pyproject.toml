@@ -1,0 +1,23 @@
+[build-system]
+requires = ["maturin>=1.7,<2"]
+build-backend = "maturin"
+
+[project]
+name = "tzctl"
+version = "0.1.0"
+description = "Manage managed Tenzir pipelines through the Tenzir Platform"
+readme = "README.md"
+requires-python = ">=3.8"
+license = "Apache-2.0"
+authors = [{ name = "Tenzir", email = "engineering@tenzir.com" }]
+keywords = ["tenzir", "pipeline", "cli", "platform", "security"]
+
+[project.urls]
+Homepage = "https://tenzir.com"
+Repository = "https://github.com/tenzir/tzctl"
+Documentation = "https://docs.tenzir.com"
+
+[tool.maturin]
+bindings = "bin"
+# Strip debug symbols from the shipped binary.
+strip = true

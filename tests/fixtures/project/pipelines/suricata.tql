@@ -1,0 +1,5 @@
+// ---
+// name: user-assigned-name
+// state: running
+// ---
+export | where foo | publish /bar

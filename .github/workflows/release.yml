@@ -1,0 +1,87 @@
+name: Release
+
+# Publish to PyPI (as wheels + sdist via maturin) and crates.io whenever a
+# version tag is pushed, e.g. `v0.1.0`.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  # Build platform wheels that bundle the compiled `tzctl` binary.
+  wheels:
+    name: wheels (${{ matrix.platform.runner }}, ${{ matrix.platform.target }})
+    runs-on: ${{ matrix.platform.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - { runner: ubuntu-latest, target: x86_64, manylinux: auto }
+          - { runner: ubuntu-24.04-arm, target: aarch64, manylinux: auto }
+          - { runner: macos-latest, target: aarch64 }
+          - { runner: windows-latest, target: x64 }
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.platform.target }}
+          manylinux: ${{ matrix.platform.manylinux }}
+          args: --release --out dist
+          sccache: "true"
+      - uses: actions/upload-artifact@v5
+        with:
+          name: wheels-${{ matrix.platform.runner }}-${{ matrix.platform.target }}
+          path: dist/*.whl
+
+  # Build the source distribution once.
+  sdist:
+    name: sdist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build sdist
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist
+      - uses: actions/upload-artifact@v5
+        with:
+          name: wheels-sdist
+          path: dist/*.tar.gz
+
+  # Publish everything to PyPI via Trusted Publishing (OIDC, no token needed).
+  publish-pypi:
+    name: publish to PyPI
+    needs: [wheels, sdist]
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write # required for Trusted Publishing
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          pattern: wheels-*
+          merge-multiple: true
+          path: dist
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist
+
+  # Publish the crate to crates.io.
+  publish-crates:
+    name: publish to crates.io
+    needs: [wheels, sdist]
+    runs-on: ubuntu-latest
+    environment: crates-io
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Publish to crates.io
+        run: cargo publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

@@ -1,0 +1,26 @@
+{
+  "pipelines": [
+    {
+      "id": "4c7f2b11-6169-4d1b-89b4-4fc0a68b3d4a",
+      "name": "user-assigned-name",
+      "definition": "export | where foo | publish /bar",
+      "hidden": false,
+      "created_at": 1706180157837037600,
+      "last_modified": 1706180157837038000,
+      "state": "running",
+      "error": null,
+      "diagnostics": []
+    },
+    {
+      "id": "08446737-da9b-4787-8599-97d85c48c3bb",
+      "name": "wrong-pipeline",
+      "definition": "export asdf",
+      "hidden": false,
+      "created_at": 1706180157837037600,
+      "last_modified": 1706180157837038000,
+      "state": "failed",
+      "error": "format 'asdf' not found",
+      "diagnostics": []
+    }
+  ]
+}
