@@ -127,7 +127,7 @@ fn render_action(action: &Action) -> String {
         }
         Action::Transition { name, from, to, .. } => format!(
             "{} {:<24} {:<10} {} -> {}",
-            "⏸".yellow(),
+            crate::symbols::TRANSITION.yellow(),
             name,
             "transition",
             from,

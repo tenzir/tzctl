@@ -67,10 +67,11 @@ pub async fn create(
     print_text(
         output,
         format!(
-            "{} Created {} ({}) → {:?}",
-            "✓".green().bold(),
+            "{} Created {} ({}) {} {:?}",
+            crate::symbols::OK.green().bold(),
             desired.name.bold(),
             id,
+            crate::symbols::TRANSITION,
             desired.state
         ),
     );
@@ -110,7 +111,7 @@ pub async fn set(
         output,
         format!(
             "{} Updated {} ({}) in place",
-            "✓".green().bold(),
+            crate::symbols::OK.green().bold(),
             desired.name.bold(),
             remote.id
         ),
@@ -162,7 +163,7 @@ pub async fn delete(
         .map_err(map_err)?;
     print_text(
         output,
-        format!("{} Deleted {}", "✓".green().bold(), name.bold()),
+        format!("{} Deleted {}", crate::symbols::OK.green().bold(), name.bold()),
     );
     emit(
         output,
@@ -238,7 +239,7 @@ async fn transition_command(
         let note = format!("already {target_label}");
         print_text(
             output,
-            format!("{} {} is {note}", "•".dimmed(), name.bold()),
+            format!("{} {} is {note}", crate::symbols::BULLET.dimmed(), name.bold()),
         );
         return emit(
             output,
@@ -258,7 +259,12 @@ async fn transition_command(
         .map_err(map_err)?;
     print_text(
         output,
-        format!("{} {} → {target_label}", "✓".green().bold(), name.bold()),
+        format!(
+            "{} {} {} {target_label}",
+            crate::symbols::OK.green().bold(),
+            name.bold(),
+            crate::symbols::TRANSITION
+        ),
     );
     emit(
         output,

@@ -11,6 +11,8 @@ mod output;
 mod project;
 mod reconcile;
 mod status;
+mod symbols;
+mod table;
 
 use std::process::ExitCode;
 

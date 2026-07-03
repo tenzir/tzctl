@@ -109,12 +109,12 @@ pub async fn run(
 /// Render an apply report as human-readable text.
 fn print_report(report: &ApplyReport) {
     for ok in &report.succeeded {
-        println!("{} {} {}", "✓".green().bold(), ok.kind, ok.name);
+        println!("{} {} {}", crate::symbols::OK.green().bold(), ok.kind, ok.name);
     }
     for fail in &report.failed {
         println!(
             "{} {} {}: {}",
-            "✗".red().bold(),
+            crate::symbols::ERR.red().bold(),
             fail.kind,
             fail.name,
             fail.error.as_deref().unwrap_or("unknown error")

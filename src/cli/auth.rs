@@ -23,7 +23,11 @@ pub async fn login(
     let authenticator = Authenticator::new(config, sources)?;
     let claims = authenticator.login(mode, print_device_prompt).await?;
     let who = claims.display_name().unwrap_or("user");
-    println!("{} Logged in as {}", "✓".green().bold(), who.bold());
+    println!(
+        "{} Logged in as {}",
+        crate::symbols::OK.green().bold(),
+        who.bold()
+    );
     Ok(())
 }
 
@@ -32,7 +36,7 @@ pub async fn logout(config: &ResolvedConfig, sources: TokenSources) -> Result<()
     let authenticator = Authenticator::new(config, sources)?;
     let removed = authenticator.logout().map_err(HintedError::new)?;
     if removed {
-        println!("{} Logged out", "✓".green().bold());
+        println!("{} Logged out", crate::symbols::OK.green().bold());
     } else {
         println!("No cached credentials to remove");
     }

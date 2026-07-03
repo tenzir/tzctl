@@ -95,12 +95,12 @@ pub async fn run(
         OutputMode::Json => emit_json(&report)?,
         OutputMode::Text => {
             for ok in &report.succeeded {
-                println!("{} deleted {}", "✓".green().bold(), ok.name);
+                println!("{} deleted {}", crate::symbols::OK.green().bold(), ok.name);
             }
             for fail in &report.failed {
                 println!(
                     "{} {}: {}",
-                    "✗".red().bold(),
+                    crate::symbols::ERR.red().bold(),
                     fail.name,
                     fail.error.as_deref().unwrap_or("unknown error")
                 );

@@ -1,6 +1,5 @@
 //! Handler for `tz node list`.
 
-use comfy_table::{Table, presets::UTF8_FULL};
 use owo_colors::OwoColorize;
 
 use crate::auth::TokenSources;
@@ -9,6 +8,7 @@ use crate::config::ResolvedConfig;
 use crate::error::{Error, HintedError};
 use crate::model::{Node, TenantId};
 use crate::output::{self, OutputMode};
+use crate::table::{Align, Table};
 
 /// Handle `tz node list`.
 pub async fn list(
@@ -39,21 +39,19 @@ fn render_table(nodes: &[Node]) -> String {
     if nodes.is_empty() {
         return "No nodes in this workspace.".to_string();
     }
-    let mut table = Table::new();
-    table.load_preset(UTF8_FULL);
-    table.set_header(["#", "NAME", "NODE ID", "STATUS"]);
+    let mut table = Table::new(["#", "NAME", "NODE ID", "STATUS"]).align(0, Align::Right);
     for (i, node) in nodes.iter().enumerate() {
         let status = if node.connected {
             "connected".green().to_string()
         } else {
             "disconnected".red().to_string()
         };
-        table.add_row([
+        table.row([
             (i + 1).to_string(),
             node.name.clone(),
             node.node_id.to_string(),
             status,
         ]);
     }
-    table.to_string()
+    table.render()
 }

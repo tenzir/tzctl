@@ -1,6 +1,5 @@
 //! Handlers for `tz workspace list` and `tz workspace select`.
 
-use comfy_table::{Table, presets::UTF8_FULL};
 use owo_colors::OwoColorize;
 
 use crate::auth::TokenSources;
@@ -9,6 +8,7 @@ use crate::config::ResolvedConfig;
 use crate::error::{Error, HintedError};
 use crate::model::{self, TenantId};
 use crate::output::{self, OutputMode};
+use crate::table::{Align, Table};
 
 /// Handle `tz workspace list`.
 pub async fn list(
@@ -28,17 +28,15 @@ fn render_table(workspaces: &[crate::model::Workspace]) -> String {
     if workspaces.is_empty() {
         return "No workspaces available.".to_string();
     }
-    let mut table = Table::new();
-    table.load_preset(UTF8_FULL);
-    table.set_header(["#", "NAME", "WORKSPACE ID"]);
+    let mut table = Table::new(["#", "NAME", "WORKSPACE ID"]).align(0, Align::Right);
     for (i, ws) in workspaces.iter().enumerate() {
-        table.add_row([
+        table.row([
             (i + 1).to_string(),
             ws.name.clone(),
             ws.tenant_id.to_string(),
         ]);
     }
-    table.to_string()
+    table.render()
 }
 
 /// Handle `tz workspace select <query>`.
@@ -71,7 +69,7 @@ pub async fn select(
 
     println!(
         "{} Selected workspace {} ({})",
-        "✓".green().bold(),
+        crate::symbols::OK.green().bold(),
         chosen.name.bold(),
         tenant
     );

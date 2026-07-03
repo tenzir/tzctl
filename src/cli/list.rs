@@ -1,13 +1,12 @@
 //! Handler for `tz pipeline list` — the plain pipeline inventory.
 
-use comfy_table::{Table, presets::UTF8_FULL};
-
 use crate::auth::TokenSources;
 use crate::client::PlatformClient;
 use crate::config::ResolvedConfig;
 use crate::error::{Error, HintedError};
 use crate::model::RemotePipeline;
 use crate::output::{self, OutputMode};
+use crate::table::Table;
 
 /// The maximum definition width shown in the text table.
 const DEFINITION_WIDTH: usize = 60;
@@ -54,15 +53,13 @@ fn render_table(pipelines: &[RemotePipeline]) -> String {
     if pipelines.is_empty() {
         return "No pipelines on this node.".to_string();
     }
-    let mut table = Table::new();
-    table.load_preset(UTF8_FULL);
-    table.set_header(["NAME", "STATE", "DEFINITION"]);
+    let mut table = Table::new(["NAME", "STATE", "DEFINITION"]);
     for p in pipelines {
-        table.add_row([
+        table.row([
             p.name.clone(),
             p.state.to_string(),
             truncate_definition(&p.definition),
         ]);
     }
-    table.to_string()
+    table.render()
 }

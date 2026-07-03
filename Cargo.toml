@@ -29,7 +29,6 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 directories = "5"
 owo-colors = "4"
-comfy-table = "7"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 base64 = "0.22"
 time = { version = "0.3", features = ["serde", "formatting", "parsing"] }
