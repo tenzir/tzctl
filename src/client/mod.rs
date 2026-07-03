@@ -2,6 +2,7 @@
 //! error mapping.
 
 pub mod pipelines;
+pub mod query;
 pub mod session;
 pub mod transport;
 
@@ -17,6 +18,7 @@ use crate::model::{
 use pipelines::{
     CreateRequest, CreateResponse, DeleteRequest, ListRequest, ListResponse, UpdateRequest,
 };
+use query::{LaunchRequest, LaunchResponse, ServeRequest, ServeResponse};
 use session::Session;
 
 /// The high-level platform interface the CLI and reconciler depend on.
@@ -150,6 +152,64 @@ pub trait PlatformClient {
             )));
         }
         Ok(first)
+    }
+
+    /// Run a bounded, hidden TQL query on a node and collect its events.
+    ///
+    /// Launches a hidden pipeline (60 s TTL, autostart) via `pipeline/launch`,
+    /// drains its results through `serve` (following continuation tokens up to
+    /// `max_events`), then makes a best-effort attempt to stop it early. This
+    /// is the mechanism behind `tz pipeline status`.
+    async fn run_query(
+        &self,
+        workspace: &TenantId,
+        node: &NodeId,
+        definition: &str,
+        max_events: usize,
+    ) -> Result<Vec<serde_json::Value>> {
+        let id = uuid::Uuid::new_v4().to_string();
+        let launch = LaunchRequest::hidden_query(&id, &id, definition);
+        let _: LaunchResponse = self
+            .node_proxy(workspace, node, "pipeline/launch", &launch)
+            .await?;
+
+        let mut events = Vec::new();
+        let mut token: Option<String> = None;
+        let result = loop {
+            let remaining = max_events.saturating_sub(events.len());
+            if remaining == 0 {
+                break Ok(());
+            }
+            let req = ServeRequest::page(&id, remaining, token.as_deref());
+            let page: ServeResponse = match self.node_proxy(workspace, node, "serve", &req).await {
+                Ok(page) => page,
+                Err(e) => break Err(e),
+            };
+            events.extend(page.events);
+            match page.next_continuation_token {
+                Some(next) => token = Some(next),
+                None => {
+                    if page.state.as_deref() == Some("failed") {
+                        break Err(Error::Platform(
+                            "the status query pipeline failed on the node".to_string(),
+                        ));
+                    }
+                    break Ok(());
+                }
+            }
+        };
+
+        // Best-effort cleanup; the TTL also reaps the pipeline.
+        let _ = self
+            .transition(
+                workspace,
+                node,
+                &PipelineId(id),
+                crate::model::TransitionAction::Stop,
+            )
+            .await;
+
+        result.map(|()| events)
     }
 }
 
@@ -610,5 +670,80 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, Error::NodeDisconnected));
+    }
+
+    #[tokio::test]
+    async fn run_query_paginates_and_stops() {
+        let server = MockServer::start().await;
+        // Launch succeeds.
+        Mock::given(method("POST"))
+            .and(path(proxy_path("pipeline/launch")))
+            .respond_with(ResponseTemplate::new(200).set_body_string("{}"))
+            .mount(&server)
+            .await;
+        // First serve page: one event + continuation token (matched first,
+        // limited to a single response).
+        Mock::given(method("POST"))
+            .and(path(proxy_path("serve")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "events": [{"n": 1}],
+                "next_continuation_token": "tok"
+            })))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        // Subsequent serve page: final event, no token.
+        Mock::given(method("POST"))
+            .and(path(proxy_path("serve")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "events": [{"n": 2}]
+            })))
+            .mount(&server)
+            .await;
+        // Best-effort cleanup stop.
+        Mock::given(method("POST"))
+            .and(path(proxy_path("pipeline/update")))
+            .respond_with(ResponseTemplate::new(200).set_body_string("{}"))
+            .mount(&server)
+            .await;
+        let tmp = tempfile::tempdir().unwrap();
+        let api = api_for(&server, &tmp);
+        let events = api
+            .run_query(&tenant(), &node(), "diagnostics", 100)
+            .await
+            .unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0]["n"], 1);
+        assert_eq!(events[1]["n"], 2);
+    }
+
+    #[tokio::test]
+    async fn run_query_maps_failed_state_to_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path(proxy_path("pipeline/launch")))
+            .respond_with(ResponseTemplate::new(200).set_body_string("{}"))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path(proxy_path("serve")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "events": [],
+                "state": "failed"
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path(proxy_path("pipeline/update")))
+            .respond_with(ResponseTemplate::new(200).set_body_string("{}"))
+            .mount(&server)
+            .await;
+        let tmp = tempfile::tempdir().unwrap();
+        let api = api_for(&server, &tmp);
+        let err = api
+            .run_query(&tenant(), &node(), "diagnostics", 100)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, Error::Platform(_)));
     }
 }

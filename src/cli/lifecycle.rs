@@ -176,6 +176,25 @@ pub async fn delete(
     )
 }
 
+/// Handle `tz pipeline start <name>`.
+pub async fn start(
+    config: &ResolvedConfig,
+    sources: TokenSources,
+    output: OutputMode,
+    name: &str,
+) -> Result<(), HintedError> {
+    transition_command(
+        config,
+        sources,
+        output,
+        name,
+        TransitionAction::Start,
+        "running",
+        |s| matches!(s, LifecycleState::Running),
+    )
+    .await
+}
+
 /// Handle `tz pipeline stop <name>`.
 pub async fn stop(
     config: &ResolvedConfig,

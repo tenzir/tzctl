@@ -9,7 +9,8 @@ shows or applies the changes needed to bring them back in sync.
 
 - Sign in to the Tenzir Platform.
 - List workspaces, nodes, and pipelines.
-- Create, update, stop, and delete individual pipelines.
+- Create, update, start, stop, and delete individual pipelines.
+- Inspect a pipeline's diagnostics and throughput with `pipeline status`.
 - Plan and apply declarative changes from a local project.
 - Export machine-readable output with `--output json`.
 
@@ -91,8 +92,11 @@ tzctl node list
 tzctl pipeline list
 tzctl pipeline create path/to/pipeline.tql
 tzctl pipeline set path/to/pipeline.tql
+tzctl pipeline start <name>
 tzctl pipeline stop <name>
 tzctl pipeline delete <name>
+tzctl pipeline status <name>
+tzctl pipeline status <name> --range 7d --limit 50
 
 tzctl project plan
 tzctl project apply

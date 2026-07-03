@@ -10,6 +10,7 @@ mod model;
 mod output;
 mod project;
 mod reconcile;
+mod status;
 
 use std::process::ExitCode;
 

@@ -8,6 +8,7 @@ mod lifecycle;
 mod list;
 mod node;
 mod plan;
+mod status;
 mod workspace;
 
 use std::path::PathBuf;
@@ -115,10 +116,26 @@ pub enum PipelineCommand {
         /// The pipeline name.
         name: String,
     },
+    /// Start (or resume) a pipeline.
+    Start {
+        /// The pipeline name.
+        name: String,
+    },
     /// Stop a pipeline (resets state).
     Stop {
         /// The pipeline name.
         name: String,
+    },
+    /// Inspect a pipeline's diagnostics and performance insights.
+    Status {
+        /// The pipeline name.
+        name: String,
+        /// Time range for diagnostics and activity.
+        #[arg(long, value_enum, default_value = "1d")]
+        range: crate::status::StatusRange,
+        /// Maximum number of recent diagnostics to show.
+        #[arg(long, default_value_t = 20)]
+        limit: usize,
     },
 }
 

@@ -37,8 +37,14 @@ pub async fn handle(
             PipelineCommand::Delete { name } => {
                 zero(super::lifecycle::delete(config, sources, output, name, yes).await)
             }
+            PipelineCommand::Start { name } => {
+                zero(super::lifecycle::start(config, sources, output, name).await)
+            }
             PipelineCommand::Stop { name } => {
                 zero(super::lifecycle::stop(config, sources, output, name).await)
+            }
+            PipelineCommand::Status { name, range, limit } => {
+                zero(super::status::run(config, sources, output, name, *range, *limit).await)
             }
         },
         Command::Project(cmd) => match cmd {

@@ -1,0 +1,23 @@
+[
+  {
+    "timestamp": "2026-07-03T09:12:44.000000",
+    "severity": "error",
+    "message": "connection refused",
+    "pipeline_id": "4c7f2b11-6169-4d1b-89b4-4fc0a68b3d4a",
+    "rendered": "error: connection refused"
+  },
+  {
+    "timestamp": "2026-07-03T08:01:10.000000",
+    "severity": "warning",
+    "message": "slow sink",
+    "pipeline_id": "4c7f2b11-6169-4d1b-89b4-4fc0a68b3d4a",
+    "rendered": "warning: slow sink"
+  },
+  {
+    "timestamp": "2026-07-03T07:55:02.000000",
+    "severity": "note",
+    "message": "pipeline started",
+    "pipeline_id": "4c7f2b11-6169-4d1b-89b4-4fc0a68b3d4a",
+    "rendered": "note: pipeline started"
+  }
+]
