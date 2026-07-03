@@ -87,6 +87,21 @@ impl<'a> ServeRequest<'a> {
     }
 }
 
+/// The `pipeline/reset-ttl` request body, used to keep a served pipeline alive
+/// while its results are streamed.
+#[derive(Debug, Serialize)]
+pub struct ResetTtlRequest<'a> {
+    /// The ids of the pipelines whose TTL should be refreshed.
+    pub ids: [&'a str; 1],
+}
+
+impl<'a> ResetTtlRequest<'a> {
+    /// A reset-ttl request for a single pipeline id.
+    pub fn one(id: &'a str) -> Self {
+        Self { ids: [id] }
+    }
+}
+
 /// One page of a `serve` response.
 #[derive(Debug, Default, Deserialize)]
 pub struct ServeResponse {
@@ -144,6 +159,12 @@ mod tests {
                 "schema": "never"
             })
         );
+    }
+
+    #[test]
+    fn reset_ttl_body_wraps_id_in_array() {
+        let body = serde_json::to_value(ResetTtlRequest::one("pid")).unwrap();
+        assert_eq!(body, serde_json::json!({"ids": ["pid"]}));
     }
 
     #[test]

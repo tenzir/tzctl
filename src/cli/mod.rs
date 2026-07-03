@@ -8,6 +8,7 @@ mod lifecycle;
 mod list;
 mod node;
 mod plan;
+mod run;
 mod status;
 mod workspace;
 
@@ -76,6 +77,11 @@ pub enum Command {
     /// Act on individual pipelines on the target node.
     #[command(subcommand)]
     Pipeline(PipelineCommand),
+    /// Run a `.tql` file on the target node and stream results to stdout.
+    Run {
+        /// Path to the `.tql` file.
+        file: PathBuf,
+    },
     /// Sync the local project directory to the platform.
     #[command(subcommand)]
     Project(ProjectCommand),
@@ -142,12 +148,6 @@ pub enum PipelineCommand {
 /// `tz project` subcommands: declarative directory-as-source-of-truth sync.
 #[derive(Debug, Subcommand)]
 pub enum ProjectCommand {
-    /// Show the actions `apply` would take.
-    Plan {
-        /// Show whether orphaned (actual-only) pipelines would be pruned.
-        #[arg(long)]
-        prune: bool,
-    },
     /// Reconcile the node's pipelines with the project.
     Apply {
         /// Also delete orphaned (actual-only) pipelines.
@@ -342,11 +342,6 @@ mod tests {
         assert!(matches!(
             cli.command,
             Command::Project(ProjectCommand::Apply { prune: true, .. })
-        ));
-        let cli = Cli::try_parse_from(["tz", "project", "plan"]).unwrap();
-        assert!(matches!(
-            cli.command,
-            Command::Project(ProjectCommand::Plan { prune: false })
         ));
     }
 

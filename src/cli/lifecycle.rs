@@ -163,7 +163,11 @@ pub async fn delete(
         .map_err(map_err)?;
     print_text(
         output,
-        format!("{} Deleted {}", crate::symbols::OK.green().bold(), name.bold()),
+        format!(
+            "{} Deleted {}",
+            crate::symbols::OK.green().bold(),
+            name.bold()
+        ),
     );
     emit(
         output,
@@ -239,7 +243,11 @@ async fn transition_command(
         let note = format!("already {target_label}");
         print_text(
             output,
-            format!("{} {} is {note}", crate::symbols::BULLET.dimmed(), name.bold()),
+            format!(
+                "{} {} is {note}",
+                crate::symbols::BULLET.dimmed(),
+                name.bold()
+            ),
         );
         return emit(
             output,

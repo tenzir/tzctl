@@ -222,7 +222,11 @@ mod tests {
         t.row(["1", "value"]);
         t.row(["longlong", ""]);
         for line in t.render().lines() {
-            assert_eq!(line.trim_end(), line, "line has trailing whitespace: {line:?}");
+            assert_eq!(
+                line.trim_end(),
+                line,
+                "line has trailing whitespace: {line:?}"
+            );
         }
     }
 

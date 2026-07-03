@@ -1,14 +1,12 @@
-//! Handler for `tz project plan` — the read-only desired-vs-actual diff.
+//! Shared plan computation and rendering used by `tz project apply`.
 
 use owo_colors::OwoColorize;
 
-use crate::auth::TokenSources;
 use crate::client::PlatformApi;
 use crate::client::PlatformClient;
 use crate::config::ResolvedConfig;
-use crate::error::{Error, HintedError};
+use crate::error::HintedError;
 use crate::model::{NodeId, TenantId};
-use crate::output::OutputMode;
 use crate::project;
 use crate::reconcile::{self, Action, Plan, ReconcileOpts};
 
@@ -38,35 +36,6 @@ pub(super) async fn compute(
         &actual,
         ReconcileOpts { prune },
     ))
-}
-
-/// Handle `tz project plan`.
-///
-/// Read-only. Returns exit code `0` when in sync, `2` when changes are pending.
-pub async fn run(
-    config: &ResolvedConfig,
-    sources: TokenSources,
-    output: OutputMode,
-    prune: bool,
-) -> Result<u8, HintedError> {
-    let (workspace, node) = super::resolve_target(config)?;
-    let client = super::platform_client(config, sources).await?;
-    let plan = compute(config, &client, &workspace, &node, prune).await?;
-
-    match output {
-        OutputMode::Json => {
-            let json = serde_json::to_string_pretty(&plan)
-                .map_err(|e| HintedError::new(Error::Other(e.into())))?;
-            println!("{json}");
-        }
-        OutputMode::Text => print!("{}", render(&plan)),
-    }
-
-    Ok(if plan.has_changes() {
-        EXIT_CHANGES_PENDING
-    } else {
-        0
-    })
 }
 
 /// Render a plan as a stable, reviewable diff.

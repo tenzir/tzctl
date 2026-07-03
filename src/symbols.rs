@@ -20,11 +20,7 @@ mod tests {
     #[test]
     fn glyphs_are_single_scalar_values() {
         for s in [OK, ERR, BULLET, TRANSITION] {
-            assert_eq!(
-                s.chars().count(),
-                1,
-                "{s:?} must be a single scalar value"
-            );
+            assert_eq!(s.chars().count(), 1, "{s:?} must be a single scalar value");
         }
     }
 
