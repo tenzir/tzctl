@@ -50,7 +50,7 @@ pub async fn handle(
                 zero(super::insights::run(config, sources, output, name).await)
             }
         },
-        Command::Run { file } => zero(super::run::run(config, sources, output, file).await),
+        Command::Run(args) => zero(super::run::run(config, sources, output, args).await),
         Command::Project(cmd) => match cmd {
             ProjectCommand::Apply { prune, dry_run } => {
                 super::apply::run(config, sources, output, *prune, *dry_run, yes).await

@@ -247,7 +247,7 @@ pub trait PlatformClient {
             Ok(())
         };
         let result = tokio::join!(
-            self.stream_loop(workspace, node, &id, &mut collect, Some(&cancel)),
+            self.stream_loop(workspace, node, &id, &mut collect, Some(&cancel), true),
             timer,
         )
         .0;
@@ -303,7 +303,7 @@ pub trait PlatformClient {
             .await?;
 
         let result = self
-            .stream_loop(workspace, node, &id, &mut on_events, None)
+            .stream_loop(workspace, node, &id, &mut on_events, None, true)
             .await;
 
         // Best-effort cleanup; the TTL also reaps the pipeline.
@@ -324,9 +324,14 @@ pub trait PlatformClient {
     /// Launches the given `definition` and, alongside it, a companion hidden
     /// pipeline that tails `diagnostics live=true, retro=true` filtered to the
     /// main pipeline's id. Result events go to `on_events`; diagnostics go to
-    /// `on_diagnostic`, both as they arrive. When the main pipeline terminates
-    /// (or on Ctrl-C) the diagnostics loop is cancelled and both pipelines are
-    /// stopped. This backs `tz run`.
+    /// `on_diagnostic`, both live as they arrive.
+    ///
+    /// The diagnostics pipeline is live and never terminates on its own. When
+    /// the main pipeline ends (completion, failure, or Ctrl-C) we *stop the
+    /// diagnostics pipeline node-side* rather than aborting its serve request:
+    /// its serve stream then drains any buffered diagnostics and returns a
+    /// terminal page, so the diagnostics loop ends by itself. We wait for both
+    /// loops to finish before returning, so no diagnostic is ever dropped.
     async fn stream_run<E, D>(
         &self,
         workspace: &TenantId,
@@ -346,28 +351,46 @@ pub trait PlatformClient {
             .await?;
 
         let diag_id = uuid::Uuid::new_v4().to_string();
-        let diag_def = format!(
-            "remote {{ diagnostics live=true, retro=true | where pipeline_id == \"{main_id}\" }}"
-        );
+        let diag_def =
+            format!("diagnostics live=true, retro=true | where pipeline_id == \"{main_id}\"");
         let diag_launch = LaunchRequest::hidden_query(&diag_id, &diag_id, &diag_def);
         let _: LaunchResponse = self
             .node_proxy(workspace, node, "pipeline/launch", &diag_launch)
             .await?;
 
-        // Cancels the (otherwise endless) live-diagnostics loop once the main
-        // pipeline completes. `notify_one` stores a permit, so there is no race
-        // if the main loop finishes before the diagnostics loop starts waiting.
-        let cancel = tokio::sync::Notify::new();
+        // How long to keep tailing diagnostics after the main pipeline ends,
+        // so trailing diagnostics (emitted around completion/failure) still
+        // arrive over `serve` before we stop the diagnostics pipeline. Mirrors
+        // the explorer's end-window in `explorer/effects/root.ts`.
+        const DIAGNOSTICS_DRAIN_GRACE: std::time::Duration = std::time::Duration::from_millis(2500);
 
         let main_fut = async {
             let r = self
-                .stream_loop(workspace, node, &main_id, &mut on_events, None)
+                .stream_loop(workspace, node, &main_id, &mut on_events, None, true)
                 .await;
-            cancel.notify_one();
+            // Keep the live-diagnostics loop running for a short grace window so
+            // late diagnostics still arrive, then stop the diagnostics pipeline
+            // node-side. Its serve stream drains remaining diagnostics and
+            // returns a terminal page, ending the loop naturally — this is
+            // deliberately *not* a cancellation of the in-flight serve request.
+            // A Ctrl-C during the grace window skips the wait.
+            tokio::select! {
+                _ = tokio::time::sleep(DIAGNOSTICS_DRAIN_GRACE) => {}
+                _ = tokio::signal::ctrl_c() => {}
+            }
+            let _ = self
+                .transition(
+                    workspace,
+                    node,
+                    &PipelineId(diag_id.clone()),
+                    crate::model::TransitionAction::Stop,
+                )
+                .await;
             r
         };
-        let diag_fut =
-            self.stream_loop(workspace, node, &diag_id, &mut on_diagnostic, Some(&cancel));
+        // The diagnostics loop is not interruptible: it runs until its pipeline
+        // is stopped (above) and serve reports a terminal page.
+        let diag_fut = self.stream_loop(workspace, node, &diag_id, &mut on_diagnostic, None, false);
 
         let (main_res, _diag_res) = tokio::join!(main_fut, diag_fut);
 
@@ -392,11 +415,17 @@ pub trait PlatformClient {
         main_res
     }
 
-    /// The serve/keepalive loop shared by [`Self::stream_query`] and
-    /// [`Self::stream_run`].
+    /// The serve/keepalive loop shared by the streaming query helpers.
     ///
-    /// When `cancel` is `Some`, the loop also returns as soon as it is
-    /// notified (used to stop the endless live-diagnostics stream).
+    /// The loop drains `serve` pages until the pipeline terminates (a page with
+    /// no continuation token), refreshing the TTL every 30 s. It also ends
+    /// early when `cancel` is notified (used by the timed sampler) or, when
+    /// `interruptible` is set, on Ctrl-C.
+    ///
+    /// Both of those end the loop by abandoning the in-flight `serve` request.
+    /// The diagnostics loop in [`Self::stream_run`] therefore passes `None` /
+    /// `false`: it must drain to a natural terminal page once its pipeline is
+    /// stopped node-side, so no buffered diagnostic is ever dropped.
     async fn stream_loop<F>(
         &self,
         workspace: &TenantId,
@@ -404,11 +433,12 @@ pub trait PlatformClient {
         id: &str,
         on_events: &mut F,
         cancel: Option<&tokio::sync::Notify>,
+        interruptible: bool,
     ) -> Result<()>
     where
         F: FnMut(&[serde_json::Value]) -> Result<()>,
     {
-        // A future that resolves when cancelled, or never when `cancel` is None.
+        // Resolves when cancelled, or never when `cancel` is None.
         let cancel_fut = async {
             match cancel {
                 Some(notify) => notify.notified().await,
@@ -421,10 +451,18 @@ pub trait PlatformClient {
         let mut last_ttl = std::time::Instant::now();
         loop {
             let req = ServeRequest::page(id, 1024, token.as_deref());
+            // Resolves on Ctrl-C when interruptible, otherwise never.
+            let interrupt = async {
+                if interruptible {
+                    let _ = tokio::signal::ctrl_c().await;
+                } else {
+                    std::future::pending::<()>().await;
+                }
+            };
             let page: ServeResponse = tokio::select! {
                 biased;
                 _ = &mut cancel_fut => return Ok(()),
-                _ = tokio::signal::ctrl_c() => return Ok(()),
+                _ = interrupt => return Ok(()),
                 page = self.node_proxy(workspace, node, "serve", &req) => page?,
             };
             if !page.events.is_empty() {
@@ -1028,7 +1066,8 @@ mod tests {
         assert!(matches!(err, Error::Platform(_)));
     }
 
-    #[tokio::test]
+    // Paused time so the post-completion diagnostics grace window is instant.
+    #[tokio::test(start_paused = true)]
     async fn stream_run_launches_companion_diagnostics_pipeline() {
         use wiremock::matchers::body_string_contains;
 

@@ -78,11 +78,8 @@ pub enum Command {
     /// Act on individual pipelines on the target node.
     #[command(subcommand)]
     Pipeline(PipelineCommand),
-    /// Run a `.tql` file on the target node and stream results to stdout.
-    Run {
-        /// Path to the `.tql` file.
-        file: PathBuf,
-    },
+    /// Run TQL on the target node and stream results to stdout.
+    Run(RunArgs),
     /// Sync the local project directory to the platform.
     #[command(subcommand)]
     Project(ProjectCommand),
@@ -167,6 +164,18 @@ pub enum ProjectCommand {
     },
     /// Remove all project-defined pipelines from the node.
     Destroy,
+}
+
+/// Arguments for `tz run`: exactly one of `--file`/`--code` is required.
+#[derive(Debug, clap::Args)]
+#[command(group(clap::ArgGroup::new("source").required(true).args(["file", "code"])))]
+pub struct RunArgs {
+    /// Path to a `.tql` file to run.
+    #[arg(long, short = 'f', value_name = "FILE")]
+    pub file: Option<PathBuf>,
+    /// TQL code to run directly, instead of a file.
+    #[arg(long, short = 'c', value_name = "TQL")]
+    pub code: Option<String>,
 }
 
 /// Arguments for `tz auth login`.

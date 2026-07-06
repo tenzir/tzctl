@@ -3,11 +3,11 @@
 //! diagnostics (errors/warnings) emitted during execution on stderr.
 
 use std::io::Write;
-use std::path::Path;
 
 use owo_colors::OwoColorize;
 
 use crate::auth::TokenSources;
+use crate::cli::RunArgs;
 use crate::client::PlatformClient;
 use crate::config::ResolvedConfig;
 use crate::error::{Error, HintedError};
@@ -15,28 +15,39 @@ use crate::output::OutputMode;
 use crate::project;
 use crate::status::{Diagnostic, Severity};
 
-/// Handle `tz run <file>`.
+/// Handle `tz run --file <file>` / `tz run --code <tql>`.
 ///
-/// Reads the pipeline definition from `file` (stripping any frontmatter),
-/// launches it as a hidden, short-lived pipeline on the target node, and
-/// streams each served event to stdout as a compact JSON line. Diagnostics
-/// emitted during execution are printed to stderr, color-coded by severity.
-/// Streaming stops when the pipeline completes or on Ctrl-C.
+/// Resolves the pipeline definition from either a `.tql` file (stripping any
+/// frontmatter) or inline `--code`, launches it as a hidden, short-lived
+/// pipeline on the target node, and streams each served event to stdout as a
+/// compact JSON line. Diagnostics emitted during execution are printed to
+/// stderr, color-coded by severity. Streaming stops when the pipeline completes
+/// or on Ctrl-C.
 pub async fn run(
     config: &ResolvedConfig,
     sources: TokenSources,
     _output: OutputMode,
-    file: &Path,
+    args: &RunArgs,
 ) -> Result<(), HintedError> {
     let (workspace, node) = super::resolve_target(config)?;
-    let desired = project::desired_from_file(file).map_err(HintedError::new)?;
+    // `--file` and `--code` are mutually exclusive and one is required (enforced
+    // by the clap arg group), so exactly one branch applies.
+    let definition = match (&args.file, &args.code) {
+        (Some(file), _) => {
+            project::desired_from_file(file)
+                .map_err(HintedError::new)?
+                .definition
+        }
+        (None, Some(code)) => code.clone(),
+        (None, None) => unreachable!("clap requires one of --file/--code"),
+    };
     let client = super::platform_client(config, sources).await?;
 
     client
         .stream_run(
             &workspace,
             &node,
-            &desired.definition,
+            &definition,
             print_results,
             print_diagnostics,
         )
@@ -70,12 +81,20 @@ fn print_diagnostics(events: &[serde_json::Value]) -> Result<(), Error> {
         let Ok(diag) = serde_json::from_value::<Diagnostic>(value.clone()) else {
             continue;
         };
-        let label = diag.severity.label();
-        let text = diag.text();
-        let line = match diag.severity {
-            Severity::Error => format!("{}: {text}", label.red().bold()),
-            Severity::Warning => format!("{}: {text}", label.yellow().bold()),
-            _ => format!("{label}: {text}"),
+        // Prefer the node's fully-rendered diagnostic: it includes the source
+        // snippet (with carets/underlines) and ANSI colors, exactly as `tenzir`
+        // prints it. Fall back to a compact `severity: message` line.
+        let line = match diag.rendered.as_deref().map(str::trim_end) {
+            Some(rendered) if !rendered.is_empty() => rendered.to_string(),
+            _ => {
+                let label = diag.severity.label();
+                let text = diag.text();
+                match diag.severity {
+                    Severity::Error => format!("{}: {text}", label.red().bold()),
+                    Severity::Warning => format!("{}: {text}", label.yellow().bold()),
+                    _ => format!("{label}: {text}"),
+                }
+            }
         };
         writeln!(err, "{line}").map_err(|e| Error::Other(anyhow::anyhow!(e)))?;
     }
