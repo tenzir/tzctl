@@ -87,6 +87,21 @@ pub fn load_project(
     glob: &str,
     default_state: Option<&str>,
 ) -> Result<Vec<DesiredPipeline>> {
+    Ok(load_project_with_paths(root, glob, default_state)?
+        .into_iter()
+        .map(|(_, p)| p)
+        .collect())
+}
+
+/// Like [`load_project`] but also returns each pipeline's source file path.
+///
+/// Used by `tz project pull` to decide which local file to overwrite or delete
+/// for a given pipeline name.
+pub fn load_project_with_paths(
+    root: &Path,
+    glob: &str,
+    default_state: Option<&str>,
+) -> Result<Vec<(PathBuf, DesiredPipeline)>> {
     let default = default_state.map(parse_default_state).transpose()?;
 
     let walker = globwalk::GlobWalkerBuilder::from_patterns(root, &[glob])
@@ -116,10 +131,28 @@ pub fn load_project(
                 path.display()
             )));
         }
-        seen.insert(pipeline.name.clone(), path);
-        pipelines.push(pipeline);
+        seen.insert(pipeline.name.clone(), path.clone());
+        pipelines.push((path, pipeline));
     }
     Ok(pipelines)
+}
+
+/// The static directory prefix of a pipelines glob, relative to the root.
+///
+/// This is where `tz project pull` writes newly discovered pipelines. It walks
+/// the glob's leading components until the first one containing a wildcard
+/// (`*`, `?`, `[`, or `{`), e.g. `pipelines/**/*.tql` -> `pipelines`,
+/// `*.tql` -> `` (the root itself).
+pub fn glob_base_dir(root: &Path, glob: &str) -> PathBuf {
+    let mut base = root.to_path_buf();
+    for component in Path::new(glob).components() {
+        let part = component.as_os_str().to_string_lossy();
+        if part.contains(['*', '?', '[', '{']) {
+            break;
+        }
+        base.push(component);
+    }
+    base
 }
 
 #[cfg(test)]
@@ -200,5 +233,27 @@ mod tests {
         .unwrap();
         let err = load_project(tmp.path(), "pipelines/**/*.tql", None).unwrap_err();
         assert!(matches!(err, Error::Config(_)));
+    }
+
+    #[test]
+    fn load_project_with_paths_returns_source_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("pipelines")).unwrap();
+        std::fs::write(tmp.path().join("pipelines/a.tql"), "version").unwrap();
+        let loaded = load_project_with_paths(tmp.path(), "pipelines/**/*.tql", None).unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].1.name, "a");
+        assert!(loaded[0].0.ends_with("pipelines/a.tql"));
+    }
+
+    #[test]
+    fn glob_base_dir_strips_wildcards() {
+        let root = Path::new("/proj");
+        assert_eq!(
+            glob_base_dir(root, "pipelines/**/*.tql"),
+            Path::new("/proj/pipelines")
+        );
+        assert_eq!(glob_base_dir(root, "*.tql"), Path::new("/proj"));
+        assert_eq!(glob_base_dir(root, "a/b/c/*.tql"), Path::new("/proj/a/b/c"));
     }
 }

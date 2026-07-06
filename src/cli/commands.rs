@@ -55,6 +55,9 @@ pub async fn handle(
             ProjectCommand::Apply { prune, dry_run } => {
                 super::apply::run(config, sources, output, *prune, *dry_run, yes).await
             }
+            ProjectCommand::Pull { prune, dry_run } => {
+                super::pull::run(config, sources, output, *prune, *dry_run, yes).await
+            }
             ProjectCommand::Destroy => super::destroy::run(config, sources, output, yes).await,
         },
         Command::Workspace(cmd) => match cmd {

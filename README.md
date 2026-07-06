@@ -22,10 +22,10 @@ A `tzctl` project is a directory of `.tql` files plus a `tenzir.toml`
 configuration file.
 
 - Each `.tql` file defines one pipeline.
-- The file name, or optional frontmatter `name`, identifies the pipeline.
-- `tzctl project plan` shows the difference between your project and the node.
 - `tzctl project apply` creates, updates, deletes, or changes pipeline state to
-  match your project.
+  match your files.
+- `tzctl project pull` fetches pipeline definitions from the platform and writes
+  them back into your project as `.tql` files.
 
 ## Installation
 
@@ -109,6 +109,9 @@ tzctl project plan
 tzctl project apply
 tzctl project apply --dry-run
 tzctl project apply --prune
+tzctl project pull
+tzctl project pull --prune
+tzctl project pull --dry-run
 tzctl project destroy
 ```
 

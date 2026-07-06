@@ -110,6 +110,24 @@ impl LifecycleState {
     }
 }
 
+impl LifecycleState {
+    /// Map an observed lifecycle state to a declarable [`DesiredState`].
+    ///
+    /// Only `running`, `paused`, and the two terminal-but-declarable states
+    /// (`stopped`/`completed`) map cleanly. Transient or error states
+    /// (`created`, `failed`, unknown) return `None`, so callers writing
+    /// frontmatter can fall back to the project default rather than pin a
+    /// pipeline to a state it cannot hold.
+    pub fn to_desired(&self) -> Option<DesiredState> {
+        match self {
+            LifecycleState::Running => Some(DesiredState::Running),
+            LifecycleState::Paused => Some(DesiredState::Paused),
+            LifecycleState::Stopped | LifecycleState::Completed => Some(DesiredState::Stopped),
+            LifecycleState::Created | LifecycleState::Failed | LifecycleState::Other(_) => None,
+        }
+    }
+}
+
 impl From<&str> for LifecycleState {
     fn from(s: &str) -> Self {
         match s.to_ascii_lowercase().as_str() {
@@ -469,6 +487,18 @@ mod tests {
             transition_for(&L::Running, DesiredState::Stopped),
             Some(TransitionAction::Stop)
         );
+    }
+
+    #[test]
+    fn lifecycle_state_to_desired() {
+        use LifecycleState as L;
+        assert_eq!(L::Running.to_desired(), Some(DesiredState::Running));
+        assert_eq!(L::Paused.to_desired(), Some(DesiredState::Paused));
+        assert_eq!(L::Stopped.to_desired(), Some(DesiredState::Stopped));
+        assert_eq!(L::Completed.to_desired(), Some(DesiredState::Stopped));
+        assert_eq!(L::Created.to_desired(), None);
+        assert_eq!(L::Failed.to_desired(), None);
+        assert_eq!(L::Other("weird".into()).to_desired(), None);
     }
 
     #[test]

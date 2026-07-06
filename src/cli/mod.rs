@@ -9,6 +9,7 @@ mod lifecycle;
 mod list;
 mod node;
 mod plan;
+mod pull;
 mod run;
 mod status;
 mod workspace;
@@ -159,6 +160,15 @@ pub enum ProjectCommand {
         #[arg(long)]
         prune: bool,
         /// Show the plan and exit without applying (like `tz project plan`).
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Fetch pipeline definitions from the platform into local files.
+    Pull {
+        /// Also delete local files with no matching pipeline on the platform.
+        #[arg(long)]
+        prune: bool,
+        /// Show what would change and exit without writing.
         #[arg(long)]
         dry_run: bool,
     },
@@ -359,6 +369,14 @@ mod tests {
         assert!(matches!(
             cli.command,
             Command::Project(ProjectCommand::Apply { prune: true, .. })
+        ));
+        let cli = Cli::try_parse_from(["tz", "project", "pull", "--prune", "--dry-run"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Project(ProjectCommand::Pull {
+                prune: true,
+                dry_run: true
+            })
         ));
     }
 

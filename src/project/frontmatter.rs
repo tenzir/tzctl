@@ -104,6 +104,47 @@ pub fn parse(content: &str) -> Result<Parsed> {
     })
 }
 
+/// Render frontmatter + definition back into `.tql` file contents.
+///
+/// Emits a `// ---` block containing only the fields that are set, followed by
+/// the definition and a trailing newline. When no fields are set, the block is
+/// omitted and only the definition is written. This is the inverse of
+/// [`parse`]: `parse(render(fm, def))` round-trips the metadata and definition.
+pub fn render(frontmatter: &Frontmatter, definition: &str) -> String {
+    let mut fields: Vec<(&str, String)> = Vec::new();
+    if let Some(name) = &frontmatter.name {
+        fields.push(("name", name.clone()));
+    }
+    if let Some(description) = &frontmatter.description {
+        fields.push(("description", description.clone()));
+    }
+    if let Some(state) = frontmatter.state {
+        let wire = match state {
+            DesiredState::Running => "running",
+            DesiredState::Paused => "paused",
+            DesiredState::Stopped => "stopped",
+        };
+        fields.push(("state", wire.to_string()));
+    }
+    if let Some(node) = &frontmatter.node {
+        fields.push(("node", node.clone()));
+    }
+
+    let mut out = String::new();
+    if !fields.is_empty() {
+        out.push_str(DELIM);
+        out.push('\n');
+        for (key, value) in fields {
+            out.push_str(&format!("// {key}: {value}\n"));
+        }
+        out.push_str(DELIM);
+        out.push('\n');
+    }
+    out.push_str(definition.trim());
+    out.push('\n');
+    out
+}
+
 /// Strip a leading `// ` (or `//`) comment prefix from a frontmatter line.
 fn strip_comment_prefix(line: &str) -> String {
     let trimmed = line.trim_start();
@@ -161,5 +202,40 @@ mod tests {
     fn unknown_field_errors() {
         let src = "// ---\n// frobnicate: yes\n// ---\nversion\n";
         assert!(parse(src).is_err());
+    }
+
+    #[test]
+    fn render_round_trips_full_block() {
+        let fm = Frontmatter {
+            name: Some("my-pipeline".to_string()),
+            description: Some("an example".to_string()),
+            state: Some(DesiredState::Paused),
+            node: Some("n-abcd1234".to_string()),
+        };
+        let rendered = render(&fm, "from_file \"/tmp/x\"");
+        let parsed = parse(&rendered).unwrap();
+        assert_eq!(parsed.frontmatter, fm);
+        assert_eq!(parsed.definition, "from_file \"/tmp/x\"");
+    }
+
+    #[test]
+    fn render_omits_empty_block() {
+        let rendered = render(&Frontmatter::default(), "version");
+        assert_eq!(rendered, "version\n");
+        let parsed = parse(&rendered).unwrap();
+        assert_eq!(parsed.frontmatter, Frontmatter::default());
+        assert_eq!(parsed.definition, "version");
+    }
+
+    #[test]
+    fn render_round_trips_name_and_state_only() {
+        let fm = Frontmatter {
+            name: Some("p".to_string()),
+            description: None,
+            state: Some(DesiredState::Running),
+            node: None,
+        };
+        let parsed = parse(&render(&fm, "version")).unwrap();
+        assert_eq!(parsed.frontmatter, fm);
     }
 }
