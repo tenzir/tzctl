@@ -46,6 +46,9 @@ pub async fn handle(
             PipelineCommand::Status { name, range, limit } => {
                 zero(super::status::run(config, sources, output, name, *range, *limit).await)
             }
+            PipelineCommand::Insights { name } => {
+                zero(super::insights::run(config, sources, output, name).await)
+            }
         },
         Command::Run { file } => zero(super::run::run(config, sources, output, file).await),
         Command::Project(cmd) => match cmd {

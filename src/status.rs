@@ -273,14 +273,12 @@ pub fn sparkline(rates: &[f64]) -> String {
 /// Build the diagnostics query for a pipeline id and range.
 pub fn diagnostics_query(pipeline_id: &str, range: StatusRange, limit: usize) -> String {
     format!(
-        "remote {{\n  \
-           diagnostics\n  \
-           where pipeline_id == \"{id}\"\n  \
-           where timestamp > now() - {range}\n  \
-           where not hidden\n  \
-           sort -timestamp\n  \
-           head {limit}\n\
-         }}",
+        "diagnostics\n\
+         where pipeline_id == \"{id}\"\n\
+         where timestamp > now() - {range}\n\
+         where not hidden\n\
+         sort -timestamp\n\
+         head {limit}",
         id = pipeline_id,
         range = range.as_tql(),
         limit = limit,
@@ -290,7 +288,7 @@ pub fn diagnostics_query(pipeline_id: &str, range: StatusRange, limit: usize) ->
 /// Build the `pipeline::activity` query for a range.
 pub fn activity_query(range: StatusRange) -> String {
     format!(
-        "remote {{ pipeline::activity range={range}, interval={interval} }}",
+        "pipeline::activity range={range}, interval={interval}",
         range = range.as_tql(),
         interval = range.interval(),
     )
@@ -390,7 +388,8 @@ mod tests {
         assert!(q.contains("pipeline_id == \"pid-1\""));
         assert!(q.contains("now() - 1d"));
         assert!(q.contains("head 20"));
+        assert!(!q.contains("remote"));
         let a = activity_query(StatusRange::Week);
-        assert_eq!(a, "remote { pipeline::activity range=7d, interval=1h }");
+        assert_eq!(a, "pipeline::activity range=7d, interval=1h");
     }
 }

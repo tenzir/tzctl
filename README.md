@@ -11,7 +11,8 @@ shows or applies the changes needed to bring them back in sync.
 - List workspaces, nodes, and pipelines.
 - Create, update, start, stop, and delete individual pipelines.
 - Inspect a pipeline's diagnostics and throughput with `pipeline status`.
-- Run a `.tql` file ad hoc and stream results to your terminal with `run`.
+- Run a `.tql` file ad hoc and stream results (stdout) and diagnostics
+  (stderr) to your terminal with `run`.
 - Plan and apply declarative changes from a local project.
 - Export machine-readable output with `--output json`.
 

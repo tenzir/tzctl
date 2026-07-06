@@ -4,6 +4,7 @@ mod apply;
 mod auth;
 mod commands;
 mod destroy;
+mod insights;
 mod lifecycle;
 mod list;
 mod node;
@@ -142,6 +143,13 @@ pub enum PipelineCommand {
         /// Maximum number of recent diagnostics to show.
         #[arg(long, default_value_t = 20)]
         limit: usize,
+    },
+    /// Show per-operator metrics: CPU, events/s, bytes/s, batches/s, queue.
+    ///
+    /// Samples the first 10 live metric emissions of the running pipeline.
+    Insights {
+        /// The pipeline name.
+        name: String,
     },
 }
 

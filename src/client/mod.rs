@@ -212,6 +212,59 @@ pub trait PlatformClient {
         result.map(|()| events)
     }
 
+    /// Sample the output of a live TQL query for a fixed duration.
+    ///
+    /// Launches a hidden pipeline and drains its `serve` output until `window`
+    /// elapses (or the pipeline ends, or Ctrl-C), then stops it. Unlike
+    /// [`Self::run_query`], the bound is wall-clock time rather than an event
+    /// count, so the number of collected events scales with the query's output
+    /// rate — essential for `metrics ..., live=true` where each tick emits one
+    /// row per operator and a row cap would truncate mid-tick. Backs
+    /// `tz pipeline insights`.
+    async fn sample_live_query(
+        &self,
+        workspace: &TenantId,
+        node: &NodeId,
+        definition: &str,
+        window: std::time::Duration,
+    ) -> Result<Vec<serde_json::Value>> {
+        let id = uuid::Uuid::new_v4().to_string();
+        let launch = LaunchRequest::hidden_query(&id, &id, definition);
+        let _: LaunchResponse = self
+            .node_proxy(workspace, node, "pipeline/launch", &launch)
+            .await?;
+
+        // Stop draining once the sampling window elapses.
+        let cancel = tokio::sync::Notify::new();
+        let timer = async {
+            tokio::time::sleep(window).await;
+            cancel.notify_one();
+        };
+
+        let mut events = Vec::new();
+        let mut collect = |page: &[serde_json::Value]| -> Result<()> {
+            events.extend_from_slice(page);
+            Ok(())
+        };
+        let result = tokio::join!(
+            self.stream_loop(workspace, node, &id, &mut collect, Some(&cancel)),
+            timer,
+        )
+        .0;
+
+        // Best-effort cleanup; the TTL also reaps the pipeline.
+        let _ = self
+            .transition(
+                workspace,
+                node,
+                &PipelineId(id),
+                crate::model::TransitionAction::Stop,
+            )
+            .await;
+
+        result.map(|()| events)
+    }
+
     /// Refresh a served pipeline's TTL via `pipeline/reset-ttl`.
     async fn reset_ttl(&self, workspace: &TenantId, node: &NodeId, id: &str) -> Result<()> {
         let _: serde_json::Value = self
@@ -231,7 +284,8 @@ pub trait PlatformClient {
     /// follows continuation tokens until the pipeline terminates (no token),
     /// refreshing the TTL every 30 s so long-running pipelines stay alive. The
     /// stream is interrupted cleanly on Ctrl-C, and the pipeline is stopped on
-    /// exit. This backs `tz run`.
+    /// exit.
+    #[allow(dead_code)] // single-stream building block; exercised by tests.
     async fn stream_query<F>(
         &self,
         workspace: &TenantId,
@@ -248,7 +302,9 @@ pub trait PlatformClient {
             .node_proxy(workspace, node, "pipeline/launch", &launch)
             .await?;
 
-        let result = self.stream_loop(workspace, node, &id, &mut on_events).await;
+        let result = self
+            .stream_loop(workspace, node, &id, &mut on_events, None)
+            .await;
 
         // Best-effort cleanup; the TTL also reaps the pipeline.
         let _ = self
@@ -263,23 +319,111 @@ pub trait PlatformClient {
         result
     }
 
-    /// The serve/keepalive loop for [`Self::stream_query`].
+    /// Run a pipeline while concurrently streaming its runtime diagnostics.
+    ///
+    /// Launches the given `definition` and, alongside it, a companion hidden
+    /// pipeline that tails `diagnostics live=true, retro=true` filtered to the
+    /// main pipeline's id. Result events go to `on_events`; diagnostics go to
+    /// `on_diagnostic`, both as they arrive. When the main pipeline terminates
+    /// (or on Ctrl-C) the diagnostics loop is cancelled and both pipelines are
+    /// stopped. This backs `tz run`.
+    async fn stream_run<E, D>(
+        &self,
+        workspace: &TenantId,
+        node: &NodeId,
+        definition: &str,
+        mut on_events: E,
+        mut on_diagnostic: D,
+    ) -> Result<()>
+    where
+        E: FnMut(&[serde_json::Value]) -> Result<()>,
+        D: FnMut(&[serde_json::Value]) -> Result<()>,
+    {
+        let main_id = uuid::Uuid::new_v4().to_string();
+        let launch = LaunchRequest::hidden_query(&main_id, &main_id, definition);
+        let _: LaunchResponse = self
+            .node_proxy(workspace, node, "pipeline/launch", &launch)
+            .await?;
+
+        let diag_id = uuid::Uuid::new_v4().to_string();
+        let diag_def = format!(
+            "remote {{ diagnostics live=true, retro=true | where pipeline_id == \"{main_id}\" }}"
+        );
+        let diag_launch = LaunchRequest::hidden_query(&diag_id, &diag_id, &diag_def);
+        let _: LaunchResponse = self
+            .node_proxy(workspace, node, "pipeline/launch", &diag_launch)
+            .await?;
+
+        // Cancels the (otherwise endless) live-diagnostics loop once the main
+        // pipeline completes. `notify_one` stores a permit, so there is no race
+        // if the main loop finishes before the diagnostics loop starts waiting.
+        let cancel = tokio::sync::Notify::new();
+
+        let main_fut = async {
+            let r = self
+                .stream_loop(workspace, node, &main_id, &mut on_events, None)
+                .await;
+            cancel.notify_one();
+            r
+        };
+        let diag_fut =
+            self.stream_loop(workspace, node, &diag_id, &mut on_diagnostic, Some(&cancel));
+
+        let (main_res, _diag_res) = tokio::join!(main_fut, diag_fut);
+
+        // Best-effort cleanup of both pipelines; their TTLs also reap them.
+        let _ = self
+            .transition(
+                workspace,
+                node,
+                &PipelineId(main_id),
+                crate::model::TransitionAction::Stop,
+            )
+            .await;
+        let _ = self
+            .transition(
+                workspace,
+                node,
+                &PipelineId(diag_id),
+                crate::model::TransitionAction::Stop,
+            )
+            .await;
+
+        main_res
+    }
+
+    /// The serve/keepalive loop shared by [`Self::stream_query`] and
+    /// [`Self::stream_run`].
+    ///
+    /// When `cancel` is `Some`, the loop also returns as soon as it is
+    /// notified (used to stop the endless live-diagnostics stream).
     async fn stream_loop<F>(
         &self,
         workspace: &TenantId,
         node: &NodeId,
         id: &str,
         on_events: &mut F,
+        cancel: Option<&tokio::sync::Notify>,
     ) -> Result<()>
     where
         F: FnMut(&[serde_json::Value]) -> Result<()>,
     {
+        // A future that resolves when cancelled, or never when `cancel` is None.
+        let cancel_fut = async {
+            match cancel {
+                Some(notify) => notify.notified().await,
+                None => std::future::pending::<()>().await,
+            }
+        };
+        tokio::pin!(cancel_fut);
+
         let mut token: Option<String> = None;
         let mut last_ttl = std::time::Instant::now();
         loop {
             let req = ServeRequest::page(id, 1024, token.as_deref());
             let page: ServeResponse = tokio::select! {
                 biased;
+                _ = &mut cancel_fut => return Ok(()),
                 _ = tokio::signal::ctrl_c() => return Ok(()),
                 page = self.node_proxy(workspace, node, "serve", &req) => page?,
             };
@@ -882,6 +1026,46 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, Error::Platform(_)));
+    }
+
+    #[tokio::test]
+    async fn stream_run_launches_companion_diagnostics_pipeline() {
+        use wiremock::matchers::body_string_contains;
+
+        let server = MockServer::start().await;
+        // The companion diagnostics pipeline must be launched exactly once.
+        Mock::given(method("POST"))
+            .and(path(proxy_path("pipeline/launch")))
+            .and(body_string_contains("diagnostics live=true, retro=true"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("{}"))
+            .expect(1)
+            .mount(&server)
+            .await;
+        // The main pipeline launch (any other body).
+        Mock::given(method("POST"))
+            .and(path(proxy_path("pipeline/launch")))
+            .respond_with(ResponseTemplate::new(200).set_body_string("{}"))
+            .mount(&server)
+            .await;
+        // Both serve loops complete immediately (no continuation token).
+        Mock::given(method("POST"))
+            .and(path(proxy_path("serve")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "events": []
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path(proxy_path("pipeline/update")))
+            .respond_with(ResponseTemplate::new(200).set_body_string("{}"))
+            .mount(&server)
+            .await;
+        let tmp = tempfile::tempdir().unwrap();
+        let api = api_for(&server, &tmp);
+        api.stream_run(&tenant(), &node(), "version", |_| Ok(()), |_| Ok(()))
+            .await
+            .unwrap();
+        // `expect(1)` on the diagnostics launch is verified on server drop.
     }
 
     #[tokio::test]

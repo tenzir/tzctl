@@ -6,6 +6,7 @@ mod cli;
 mod client;
 mod config;
 mod error;
+mod insights;
 mod model;
 mod output;
 mod project;
