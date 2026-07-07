@@ -148,6 +148,9 @@ pub enum PipelineCommand {
     Insights {
         /// The pipeline name.
         name: String,
+        /// Render live insights as new metrics arrive, until Ctrl-C.
+        #[arg(long)]
+        watch: bool,
     },
 }
 
@@ -355,6 +358,11 @@ mod tests {
         assert!(matches!(
             cli.command,
             Command::Pipeline(PipelineCommand::Create { .. })
+        ));
+        let cli = Cli::try_parse_from(["tz", "pipeline", "insights", "p", "--watch"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Pipeline(PipelineCommand::Insights { watch: true, .. })
         ));
         let cli = Cli::try_parse_from(["tz", "pipeline", "stop", "p"]).unwrap();
         assert!(matches!(

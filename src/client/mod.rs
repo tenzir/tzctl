@@ -285,7 +285,6 @@ pub trait PlatformClient {
     /// refreshing the TTL every 30 s so long-running pipelines stay alive. The
     /// stream is interrupted cleanly on Ctrl-C, and the pipeline is stopped on
     /// exit.
-    #[allow(dead_code)] // single-stream building block; exercised by tests.
     async fn stream_query<F>(
         &self,
         workspace: &TenantId,

@@ -286,6 +286,18 @@ pub fn format_count(count: f64) -> String {
     format!("{value:.1}{}", UNITS[unit])
 }
 
+/// Format a bytes-per-second rate using only the `k`/`M` SI prefixes
+/// (e.g. `850`, `1.2k`, `3.4M`; values beyond mega stay in `M`).
+pub fn format_bytes_rate(bytes_per_sec: f64) -> String {
+    if bytes_per_sec < 1000.0 {
+        format!("{}", bytes_per_sec.round() as u64)
+    } else if bytes_per_sec < 1_000_000.0 {
+        format!("{:.1}k", bytes_per_sec / 1_000.0)
+    } else {
+        format!("{:.1}M", bytes_per_sec / 1_000_000.0)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -407,6 +419,16 @@ mod tests {
         let mut ids = ["517/10", "517/2"];
         ids.sort_by_key(|id| operator_id_segments(id));
         assert_eq!(ids, ["517/2", "517/10"]);
+    }
+
+    #[test]
+    fn format_bytes_rate_caps_at_mega() {
+        assert_eq!(format_bytes_rate(0.0), "0");
+        assert_eq!(format_bytes_rate(999.0), "999");
+        assert_eq!(format_bytes_rate(1500.0), "1.5k");
+        assert_eq!(format_bytes_rate(2_500_000.0), "2.5M");
+        // No G/T prefixes: large rates stay in M.
+        assert_eq!(format_bytes_rate(4_200_000_000.0), "4200.0M");
     }
 
     #[test]
