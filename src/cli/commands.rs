@@ -3,12 +3,10 @@
 //! `login`/`logout` are implemented; the remaining handlers are stubs that
 //! report "not implemented" until their stage lands.
 
-use anyhow::anyhow;
-
 use super::{AuthCommand, Command, NodeCommand, PipelineCommand, ProjectCommand, WorkspaceCommand};
 use crate::auth::TokenSources;
 use crate::config::ResolvedConfig;
-use crate::error::{Error, HintedError};
+use crate::error::HintedError;
 use crate::output::OutputMode;
 
 /// Dispatch a command to its handler, returning the process exit code.
@@ -68,7 +66,26 @@ pub async fn handle(
         },
         Command::Node(cmd) => match cmd {
             NodeCommand::List => zero(super::node::list(config, sources, output).await),
-            NodeCommand::Select => not_implemented("node select"),
+            NodeCommand::Ping { node } => {
+                zero(super::node::ping(config, sources, node).await)
+            }
+            NodeCommand::Create { name } => {
+                zero(super::node::create(config, sources, name.as_deref()).await)
+            }
+            NodeCommand::Config { node, file, format } => {
+                zero(super::node::config(config, sources, node, *format, file.as_deref()).await)
+            }
+            NodeCommand::Delete { node } => {
+                zero(super::node::delete(config, sources, node, yes).await)
+            }
+            NodeCommand::Proxy {
+                node,
+                endpoint,
+                body,
+            } => zero(super::node::proxy(config, sources, node, endpoint, body.as_deref()).await),
+            NodeCommand::Run { name, image } => {
+                zero(super::node::run(config, sources, name.as_deref(), image.as_deref()).await)
+            }
         },
     }
 }
@@ -76,12 +93,4 @@ pub async fn handle(
 /// Map a unit-returning handler result to exit code `0`.
 fn zero(result: Result<(), HintedError>) -> Result<u8, HintedError> {
     result.map(|()| 0)
-}
-
-/// Build a uniform "not implemented" error for a command.
-fn not_implemented(command: &str) -> Result<u8, HintedError> {
-    Err(HintedError::new(Error::Other(anyhow!(
-        "command {command:?} is not implemented yet"
-    )))
-    .with_hint("this command is scaffolded but will be implemented in a later stage"))
 }

@@ -219,8 +219,77 @@ pub enum WorkspaceCommand {
 pub enum NodeCommand {
     /// List available nodes.
     List,
-    /// Select the default node.
-    Select,
+    /// Send a ping request to a node and measure the response time.
+    Ping {
+        /// The node id or name.
+        #[arg(id = "ping_node", value_name = "NODE")]
+        node: String,
+    },
+    /// Create a new node.
+    Create {
+        /// The name of the newly created node.
+        #[arg(long)]
+        name: Option<String>,
+    },
+    /// Download the configuration for an existing node.
+    Config {
+        /// The node id or name.
+        #[arg(id = "config_node", value_name = "NODE")]
+        node: String,
+        /// Where to write the config file. Use `-` for stdout.
+        #[arg(long = "file", short = 'o', value_name = "FILE")]
+        file: Option<String>,
+        /// The format of the downloaded config file.
+        #[arg(long, value_enum, default_value_t = NodeConfigFormat::Docker)]
+        format: NodeConfigFormat,
+    },
+    /// Delete a node.
+    Delete {
+        /// The node id or name.
+        #[arg(id = "delete_node", value_name = "NODE")]
+        node: String,
+    },
+    /// Perform an HTTP request against a node's REST API.
+    Proxy {
+        /// The node id or name.
+        #[arg(id = "proxy_node", value_name = "NODE")]
+        node: String,
+        /// The node REST API endpoint, e.g. `pipeline/list`.
+        endpoint: String,
+        /// An optional JSON request body.
+        body: Option<String>,
+    },
+    /// Create a temporary node and run it in a local `docker compose` stack.
+    Run {
+        /// The name of the newly created node.
+        #[arg(long)]
+        name: Option<String>,
+        /// The docker image to use for the newly created node.
+        #[arg(long)]
+        image: Option<String>,
+    },
+}
+
+/// The configuration format for `tz node config`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum NodeConfigFormat {
+    /// A `docker compose` configuration.
+    Docker,
+    /// A `tenzir` client configuration.
+    Tenzir,
+    /// A `tenzir-node` configuration.
+    TenzirNode,
+}
+
+impl NodeConfigFormat {
+    /// The wire string expected by `generate-client-config`.
+    pub fn as_wire(self) -> &'static str {
+        match self {
+            NodeConfigFormat::Docker => "docker",
+            NodeConfigFormat::Tenzir => "tenzir",
+            NodeConfigFormat::TenzirNode => "tenzir-node",
+        }
+    }
 }
 
 /// Parse arguments, initialize logging, resolve configuration, and dispatch.
@@ -385,6 +454,50 @@ mod tests {
                 prune: true,
                 dry_run: true
             })
+        ));
+    }
+
+    #[test]
+    fn parses_node_subcommands() {
+        let cli = Cli::try_parse_from(["tz", "node", "list"]).unwrap();
+        assert!(matches!(cli.command, Command::Node(NodeCommand::List)));
+        let cli = Cli::try_parse_from(["tz", "node", "ping", "edge"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Node(NodeCommand::Ping { node }) if node == "edge"
+        ));
+        let cli = Cli::try_parse_from(["tz", "node", "create", "--name", "n1"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Node(NodeCommand::Create { name: Some(n) }) if n == "n1"
+        ));
+        let cli =
+            Cli::try_parse_from(["tz", "node", "config", "edge", "--format", "tenzir-node"])
+                .unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Node(NodeCommand::Config {
+                format: NodeConfigFormat::TenzirNode,
+                ..
+            })
+        ));
+        let cli = Cli::try_parse_from(["tz", "node", "delete", "edge"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Node(NodeCommand::Delete { node }) if node == "edge"
+        ));
+        let cli =
+            Cli::try_parse_from(["tz", "node", "proxy", "edge", "pipeline/list", "{}"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Node(NodeCommand::Proxy { endpoint, body: Some(b), .. })
+                if endpoint == "pipeline/list" && b == "{}"
+        ));
+        let cli = Cli::try_parse_from(["tz", "node", "run", "--image", "tenzir/tenzir:latest"])
+            .unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Node(NodeCommand::Run { image: Some(i), .. }) if i == "tenzir/tenzir:latest"
         ));
     }
 

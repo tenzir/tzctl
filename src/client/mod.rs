@@ -20,6 +20,7 @@ use pipelines::{
 };
 use query::{LaunchRequest, LaunchResponse, ResetTtlRequest, ServeRequest, ServeResponse};
 use session::Session;
+pub use session::ClientConfig;
 
 /// The high-level platform interface the CLI and reconciler depend on.
 ///
@@ -34,6 +35,34 @@ pub trait PlatformClient {
 
     /// List the nodes in a workspace.
     async fn list_nodes(&self, workspace: &TenantId) -> Result<Vec<Node>>;
+
+    /// Generate a node client configuration file.
+    ///
+    /// Pass `node_id` to download the config for an existing node, or
+    /// `node_name` to create a new node.
+    async fn generate_client_config(
+        &self,
+        workspace: &TenantId,
+        config_type: &str,
+        node_id: Option<&NodeId>,
+        node_name: Option<&str>,
+    ) -> Result<ClientConfig>;
+
+    /// Delete a node by id.
+    async fn delete_node(&self, workspace: &TenantId, node: &NodeId) -> Result<()>;
+
+    /// Resolve a node by id, exact name, or 1-based index from `list_nodes`.
+    async fn resolve_node(&self, workspace: &TenantId, query: &str) -> Result<Node> {
+        let nodes = self.list_nodes(workspace).await?;
+        let index = crate::model::resolve_index(
+            &nodes,
+            query,
+            |n| n.node_id.as_str(),
+            |n| n.name.as_str(),
+        )
+        .map_err(|e| Error::Platform(format!("cannot resolve node {query:?}: {e}")))?;
+        Ok(nodes[index].clone())
+    }
 
     /// Relay a request to a node endpoint through the platform node-proxy.
     async fn node_proxy<T: DeserializeOwned>(
@@ -530,6 +559,27 @@ impl PlatformClient for PlatformApi {
         self.session.list_nodes(workspace).await
     }
 
+    async fn generate_client_config(
+        &self,
+        workspace: &TenantId,
+        config_type: &str,
+        node_id: Option<&NodeId>,
+        node_name: Option<&str>,
+    ) -> Result<ClientConfig> {
+        self.session
+            .generate_client_config(
+                workspace,
+                config_type,
+                node_id.map(NodeId::as_str),
+                node_name,
+            )
+            .await
+    }
+
+    async fn delete_node(&self, workspace: &TenantId, node: &NodeId) -> Result<()> {
+        self.session.delete_node(workspace, node.as_str()).await
+    }
+
     async fn node_proxy<T: DeserializeOwned>(
         &self,
         workspace: &TenantId,
@@ -587,6 +637,27 @@ impl PlatformClient for MockClient {
             .get(workspace.as_str())
             .cloned()
             .unwrap_or_default())
+    }
+
+    async fn generate_client_config(
+        &self,
+        _workspace: &TenantId,
+        _config_type: &str,
+        node_id: Option<&NodeId>,
+        _node_name: Option<&str>,
+    ) -> Result<ClientConfig> {
+        Ok(ClientConfig {
+            node_id: node_id
+                .map(NodeId::as_str)
+                .unwrap_or("n-generated")
+                .to_string(),
+            filename: Some("docker-compose.yaml".to_string()),
+            contents: "services:\n  tenzir-node:\n    image: tenzir/tenzir\n".to_string(),
+        })
+    }
+
+    async fn delete_node(&self, _workspace: &TenantId, _node: &NodeId) -> Result<()> {
+        Ok(())
     }
 
     async fn node_proxy<T: DeserializeOwned>(

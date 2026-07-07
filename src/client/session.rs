@@ -55,6 +55,37 @@ struct ListNodesRequest<'a> {
     tenant_id: &'a str,
 }
 
+/// `generate-client-config` request body.
+#[derive(Debug, Serialize)]
+struct GenerateClientConfigRequest<'a> {
+    tenant_id: &'a str,
+    config_type: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    node_id: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    node_name: Option<&'a str>,
+}
+
+/// The node client configuration returned by `generate-client-config`.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ClientConfig {
+    /// The id of the (possibly newly-created) node.
+    pub node_id: String,
+    /// The suggested filename for the config, if any.
+    #[serde(default)]
+    pub filename: Option<String>,
+    /// The rendered configuration file contents.
+    #[serde(default)]
+    pub contents: String,
+}
+
+/// `delete-node` request body.
+#[derive(Debug, Serialize)]
+struct DeleteNodeRequest<'a> {
+    tenant_id: &'a str,
+    node_id: &'a str,
+}
+
 /// `list-nodes` response body.
 #[derive(Debug, Deserialize)]
 struct ListNodesResponse {
@@ -212,6 +243,49 @@ impl Session {
             })
             .await?;
         Ok(resp.nodes.into_iter().map(RawNode::into_node).collect())
+    }
+
+    /// Generate a node client configuration file (`generate-client-config`).
+    ///
+    /// Pass `node_id` to download the config for an existing node, or
+    /// `node_name` to create a new node.
+    pub async fn generate_client_config(
+        &self,
+        tenant: &TenantId,
+        config_type: &str,
+        node_id: Option<&str>,
+        node_name: Option<&str>,
+    ) -> Result<ClientConfig> {
+        let req = GenerateClientConfigRequest {
+            tenant_id: tenant.as_str(),
+            config_type,
+            node_id,
+            node_name,
+        };
+        self.with_key_retry(tenant, |key| {
+            let req = &req;
+            async move {
+                self.client
+                    .request_user(&key, "generate-client-config", req)
+                    .await
+            }
+        })
+        .await
+    }
+
+    /// Delete a node by id (`delete-node`).
+    pub async fn delete_node(&self, tenant: &TenantId, node_id: &str) -> Result<()> {
+        let req = DeleteNodeRequest {
+            tenant_id: tenant.as_str(),
+            node_id,
+        };
+        let _: serde_json::Value = self
+            .with_key_retry(tenant, |key| {
+                let req = &req;
+                async move { self.client.request_user(&key, "delete-node", req).await }
+            })
+            .await?;
+        Ok(())
     }
 
     /// Run `op` with a cached key; on a `401` Auth error, re-mint once.
