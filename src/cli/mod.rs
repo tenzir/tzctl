@@ -1,8 +1,10 @@
 //! Command-line surface: argument parsing and command dispatch.
 
+mod alert;
 mod apply;
 mod auth;
 mod commands;
+mod org;
 mod destroy;
 mod insights;
 mod lifecycle;
@@ -87,9 +89,86 @@ pub enum Command {
     /// Manage and select workspaces.
     #[command(subcommand)]
     Workspace(WorkspaceCommand),
+    /// Manage the current organization.
+    #[command(subcommand)]
+    Org(OrgCommand),
+    /// Manage node-disconnect alerts.
+    #[command(subcommand)]
+    Alert(AlertCommand),
     /// Manage and select nodes.
     #[command(subcommand)]
     Node(NodeCommand),
+}
+
+/// `tz org` subcommands: act on the user's current organization.
+#[derive(Debug, Subcommand)]
+pub enum OrgCommand {
+    /// Show information about the current organization.
+    Info,
+    /// Create a new organization.
+    Create {
+        /// The organization name.
+        name: String,
+    },
+    /// Create a new org-owned workspace.
+    CreateWorkspace {
+        /// The workspace name (defaults to a timestamped name).
+        #[arg(long)]
+        name: Option<String>,
+    },
+    /// Delete the current organization.
+    Delete,
+    /// Create an invitation for the current organization.
+    Invite {
+        /// The role granted to the invitee: `member` (default) or `admin`.
+        #[arg(long, default_value = "member")]
+        role: String,
+        /// An optional label to attach to the invitation.
+        #[arg(long)]
+        label: Option<String>,
+    },
+    /// Leave the current organization.
+    Leave,
+    /// List invitations for the current organization.
+    ListInvitations,
+    /// Revoke an invitation by id.
+    RevokeInvitation {
+        /// The invitation id to revoke.
+        invitation_id: String,
+    },
+    /// Redeem an invitation token to join an organization.
+    RedeemInvitation {
+        /// The invitation token.
+        token: String,
+    },
+    /// Remove a member from the current organization.
+    RemoveMember {
+        /// The user id to remove.
+        user_id: String,
+    },
+}
+
+/// `tz alert` subcommands: node-disconnect alerts for the current workspace.
+#[derive(Debug, Subcommand)]
+pub enum AlertCommand {
+    /// Add a new alert.
+    Add {
+        /// The node id or name to monitor.
+        node: String,
+        /// The idle duration before triggering, e.g. `30s`, `5m`, `1h`.
+        duration: String,
+        /// The webhook URL to call when the alert triggers.
+        webhook_url: String,
+        /// The JSON body to send with the webhook (defaults to a message).
+        webhook_body: Option<String>,
+    },
+    /// Delete an alert by id.
+    Delete {
+        /// The alert id to delete.
+        alert_id: String,
+    },
+    /// List all configured alerts.
+    List,
 }
 
 /// `tz auth` subcommands: credential lifecycle (no node/pipeline I/O).
@@ -211,6 +290,32 @@ pub enum WorkspaceCommand {
     Select {
         /// Workspace id, name, or 1-based index from `tz workspace list`.
         query: String,
+    },
+    /// Create an invitation for the current workspace.
+    Invite {
+        /// The role granted to the invitee: `member` (default) or `admin`.
+        #[arg(long, default_value = "member")]
+        role: String,
+        /// An optional label to attach to the invitation.
+        #[arg(long)]
+        label: Option<String>,
+    },
+    /// List invitations for the current workspace.
+    ListInvitations,
+    /// Revoke an invitation for the current workspace by id.
+    RevokeInvitation {
+        /// The invitation id to revoke.
+        invitation_id: String,
+    },
+    /// Redeem an invitation token to join a workspace.
+    RedeemInvitation {
+        /// The invitation token.
+        token: String,
+    },
+    /// Rename the current workspace.
+    Rename {
+        /// The new workspace name.
+        name: String,
     },
 }
 
@@ -498,6 +603,89 @@ mod tests {
         assert!(matches!(
             cli.command,
             Command::Node(NodeCommand::Run { image: Some(i), .. }) if i == "tenzir/tenzir:latest"
+        ));
+    }
+
+    #[test]
+    fn parses_workspace_subcommands() {
+        let cli = Cli::try_parse_from(["tz", "workspace", "list"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Workspace(WorkspaceCommand::List)
+        ));
+        let cli =
+            Cli::try_parse_from(["tz", "workspace", "invite", "--role", "admin"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Workspace(WorkspaceCommand::Invite { role, .. }) if role == "admin"
+        ));
+        let cli = Cli::try_parse_from(["tz", "workspace", "list-invitations"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Workspace(WorkspaceCommand::ListInvitations)
+        ));
+        let cli =
+            Cli::try_parse_from(["tz", "workspace", "revoke-invitation", "i-1"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Workspace(WorkspaceCommand::RevokeInvitation { invitation_id }) if invitation_id == "i-1"
+        ));
+        let cli = Cli::try_parse_from(["tz", "workspace", "redeem-invitation", "tok"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Workspace(WorkspaceCommand::RedeemInvitation { token }) if token == "tok"
+        ));
+        let cli = Cli::try_parse_from(["tz", "workspace", "rename", "prod"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Workspace(WorkspaceCommand::Rename { name }) if name == "prod"
+        ));
+    }
+
+    #[test]
+    fn parses_org_subcommands() {
+        let cli = Cli::try_parse_from(["tz", "org", "info"]).unwrap();
+        assert!(matches!(cli.command, Command::Org(OrgCommand::Info)));
+        let cli = Cli::try_parse_from(["tz", "org", "create", "acme"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Org(OrgCommand::Create { name }) if name == "acme"
+        ));
+        let cli =
+            Cli::try_parse_from(["tz", "org", "create-workspace", "--name", "w"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Org(OrgCommand::CreateWorkspace { name: Some(n) }) if n == "w"
+        ));
+        let cli = Cli::try_parse_from(["tz", "org", "remove-member", "u-1"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Org(OrgCommand::RemoveMember { user_id }) if user_id == "u-1"
+        ));
+        let cli = Cli::try_parse_from(["tz", "org", "invite", "--role", "admin"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Org(OrgCommand::Invite { role, .. }) if role == "admin"
+        ));
+    }
+
+    #[test]
+    fn parses_alert_subcommands() {
+        let cli = Cli::try_parse_from(["tz", "alert", "list"]).unwrap();
+        assert!(matches!(cli.command, Command::Alert(AlertCommand::List)));
+        let cli = Cli::try_parse_from([
+            "tz", "alert", "add", "edge", "30s", "https://hook",
+        ])
+        .unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Alert(AlertCommand::Add { node, duration, webhook_url, webhook_body: None })
+                if node == "edge" && duration == "30s" && webhook_url == "https://hook"
+        ));
+        let cli = Cli::try_parse_from(["tz", "alert", "delete", "a-1"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Alert(AlertCommand::Delete { alert_id }) if alert_id == "a-1"
         ));
     }
 

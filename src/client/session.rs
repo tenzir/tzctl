@@ -86,6 +86,143 @@ struct DeleteNodeRequest<'a> {
     node_id: &'a str,
 }
 
+/// `workspace/create-invitation` request body.
+#[derive(Debug, Serialize)]
+struct CreateInvitationRequest<'a> {
+    tenant_id: &'a str,
+    role: &'a str,
+    label: &'a str,
+}
+
+/// `workspace/create-invitation` response body.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct Invitation {
+    /// The id of the created invitation.
+    pub invitation_id: String,
+    /// The token to redeem the invitation.
+    pub token: String,
+}
+
+/// `workspace/list-invitations` response body.
+#[derive(Debug, Deserialize)]
+struct ListInvitationsResponse {
+    #[serde(default)]
+    invitations: Vec<InvitationInfo>,
+}
+
+/// An invitation entry in the list-invitations response.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct InvitationInfo {
+    /// The id of the invitation.
+    pub invitation_id: String,
+    /// The status of the invitation, if reported.
+    #[serde(default)]
+    pub status: Option<String>,
+    /// The label attached to the invitation, if any.
+    #[serde(default)]
+    pub label: Option<String>,
+    /// The role granted by the invitation, if reported (org invitations).
+    #[serde(default)]
+    pub role: Option<String>,
+}
+
+/// An organization entry (`org/list`, `org/get`, `org/create`).
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct Organization {
+    /// The id of the organization.
+    pub organization_id: String,
+    /// The name of the organization, if reported.
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
+/// `org/list` response body.
+#[derive(Debug, Deserialize)]
+struct OrgListResponse {
+    #[serde(default)]
+    organizations: Vec<Organization>,
+}
+
+/// `org/list-members` response body.
+#[derive(Debug, Deserialize)]
+struct OrgListMembersResponse {
+    #[serde(default)]
+    members: Vec<serde_json::Value>,
+}
+
+/// `org/list-invitations` response body.
+#[derive(Debug, Deserialize)]
+struct OrgListInvitationsResponse {
+    #[serde(default)]
+    invitations: Vec<InvitationInfo>,
+}
+
+/// Aggregated organization information for `org info`.
+#[derive(Debug, Clone, Serialize)]
+pub struct OrgInfo {
+    /// The organization.
+    pub organization: Organization,
+    /// The number of members.
+    pub members: usize,
+    /// The number of pending invitations.
+    pub pending_invitations: usize,
+}
+
+/// `org/redeem-invitation` response body.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct RedeemedOrg {
+    /// The name of the joined organization.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// The id of the joined organization.
+    pub organization_id: String,
+    /// The role granted in the organization.
+    #[serde(default)]
+    pub role: Option<String>,
+}
+
+/// An alert entry (`alert/list`).
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct Alert {
+    /// The id of the alert.
+    pub id: String,
+    /// The monitored node id.
+    #[serde(default)]
+    pub node_id: Option<String>,
+    /// The idle duration (seconds) before the alert triggers.
+    #[serde(default)]
+    pub duration: Option<f64>,
+    /// The webhook URL called when the alert triggers.
+    #[serde(default)]
+    pub webhook_url: Option<String>,
+}
+
+/// `alert/list` response body.
+#[derive(Debug, Deserialize)]
+struct AlertListResponse {
+    #[serde(default)]
+    alerts: Vec<Alert>,
+}
+
+/// `workspace/redeem-invitation` response body.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct RedeemedWorkspace {
+    /// The name of the joined workspace.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// The id of the joined workspace.
+    pub tenant_id: String,
+    /// The role granted in the workspace.
+    #[serde(default)]
+    pub role: Option<String>,
+}
+
+/// `authenticate` response body (generic, non-workspace-scoped `user_key`).
+#[derive(Debug, Deserialize)]
+struct AuthenticateResponse {
+    user_key: String,
+}
+
 /// `list-nodes` response body.
 #[derive(Debug, Deserialize)]
 struct ListNodesResponse {
@@ -285,6 +422,296 @@ impl Session {
                 async move { self.client.request_user(&key, "delete-node", req).await }
             })
             .await?;
+        Ok(())
+    }
+
+    /// Create an invitation for `tenant` (`workspace/create-invitation`).
+    pub async fn create_invitation(
+        &self,
+        tenant: &TenantId,
+        role: &str,
+        label: &str,
+    ) -> Result<Invitation> {
+        let req = CreateInvitationRequest {
+            tenant_id: tenant.as_str(),
+            role,
+            label,
+        };
+        self.with_key_retry(tenant, |key| {
+            let req = &req;
+            async move {
+                self.client
+                    .request_user(&key, "workspace/create-invitation", req)
+                    .await
+            }
+        })
+        .await
+    }
+
+    /// List invitations for `tenant` (`workspace/list-invitations`).
+    pub async fn list_invitations(&self, tenant: &TenantId) -> Result<Vec<InvitationInfo>> {
+        let req = serde_json::json!({ "tenant_id": tenant.as_str() });
+        let resp: ListInvitationsResponse = self
+            .with_key_retry(tenant, |key| {
+                let req = &req;
+                async move {
+                    self.client
+                        .request_user(&key, "workspace/list-invitations", req)
+                        .await
+                }
+            })
+            .await?;
+        Ok(resp.invitations)
+    }
+
+    /// Revoke an invitation for `tenant` (`workspace/revoke-invitation`).
+    pub async fn revoke_invitation(&self, tenant: &TenantId, invitation_id: &str) -> Result<()> {
+        let req = serde_json::json!({
+            "tenant_id": tenant.as_str(),
+            "invitation_id": invitation_id,
+        });
+        let _: serde_json::Value = self
+            .with_key_retry(tenant, |key| {
+                let req = &req;
+                async move {
+                    self.client
+                        .request_user(&key, "workspace/revoke-invitation", req)
+                        .await
+                }
+            })
+            .await?;
+        Ok(())
+    }
+
+    /// Exchange the `id_token` for a generic `user_key` (`authenticate`).
+    async fn authenticate(&self) -> Result<String> {
+        let req = LoginInfoRequest {
+            id_token: &self.id_token,
+        };
+        let resp: AuthenticateResponse = self.client.request_public("authenticate", &req).await?;
+        Ok(resp.user_key)
+    }
+
+    /// Make a `USER` request authenticated with a generic (non-workspace) key.
+    async fn org_request<T: serde::de::DeserializeOwned>(
+        &self,
+        suffix: &str,
+        body: &impl Serialize,
+    ) -> Result<T> {
+        let key = self.authenticate().await?;
+        self.client.request_user(&key, suffix, body).await
+    }
+
+    /// List the organizations the user belongs to (`org/list`).
+    pub async fn org_list(&self) -> Result<Vec<Organization>> {
+        let resp: OrgListResponse = self.org_request("org/list", &serde_json::json!({})).await?;
+        Ok(resp.organizations)
+    }
+
+    /// Return the id of the user's current (first) organization.
+    async fn current_org_id(&self) -> Result<String> {
+        let organizations = self.org_list().await?;
+        organizations
+            .into_iter()
+            .next()
+            .map(|o| o.organization_id)
+            .ok_or_else(|| {
+                Error::Platform("you are not a member of any organization".to_string())
+            })
+    }
+
+    /// Create an organization (`org/create`).
+    pub async fn org_create(&self, name: &str) -> Result<Organization> {
+        self.org_request("org/create", &serde_json::json!({ "name": name }))
+            .await
+    }
+
+    /// Create an org-owned workspace (`workspace/create`); returns its id.
+    pub async fn org_create_workspace(&self, name: &str) -> Result<String> {
+        let resp: serde_json::Value = self
+            .org_request(
+                "workspace/create",
+                &serde_json::json!({ "name": name, "org_owned": true }),
+            )
+            .await?;
+        resp.get("tenant_id")
+            .and_then(|v| v.as_str())
+            .map(str::to_string)
+            .ok_or_else(|| Error::Platform("missing tenant_id in response".to_string()))
+    }
+
+    /// Fetch aggregated information about the current organization.
+    pub async fn org_info(&self) -> Result<OrgInfo> {
+        let org_id = self.current_org_id().await?;
+        let body = serde_json::json!({ "organization_id": org_id });
+        let organization: Organization = self.org_request("org/get", &body).await?;
+        let members: OrgListMembersResponse = self.org_request("org/list-members", &body).await?;
+        // Listing invitations may be forbidden for non-admins; tolerate 403.
+        let invitations = match self
+            .org_request::<OrgListInvitationsResponse>("org/list-invitations", &body)
+            .await
+        {
+            Ok(resp) => resp.invitations,
+            Err(Error::Auth(_)) => Vec::new(),
+            Err(e) => return Err(e),
+        };
+        let pending = invitations
+            .iter()
+            .filter(|i| i.status.as_deref() == Some("pending"))
+            .count();
+        Ok(OrgInfo {
+            organization,
+            members: members.members.len(),
+            pending_invitations: pending,
+        })
+    }
+
+    /// Create an invitation for the current organization.
+    pub async fn org_create_invitation(&self, role: &str, label: &str) -> Result<Invitation> {
+        let org_id = self.current_org_id().await?;
+        self.org_request(
+            "org/create-invitation",
+            &serde_json::json!({
+                "organization_id": org_id,
+                "role": role,
+                "label": label,
+            }),
+        )
+        .await
+    }
+
+    /// List invitations for the current organization.
+    pub async fn org_list_invitations(&self) -> Result<Vec<InvitationInfo>> {
+        let org_id = self.current_org_id().await?;
+        let resp: OrgListInvitationsResponse = self
+            .org_request(
+                "org/list-invitations",
+                &serde_json::json!({ "organization_id": org_id }),
+            )
+            .await?;
+        Ok(resp.invitations)
+    }
+
+    /// Revoke an invitation for the current organization.
+    pub async fn org_revoke_invitation(&self, invitation_id: &str) -> Result<()> {
+        let org_id = self.current_org_id().await?;
+        let _: serde_json::Value = self
+            .org_request(
+                "org/revoke-invitation",
+                &serde_json::json!({
+                    "organization_id": org_id,
+                    "invitation_id": invitation_id,
+                }),
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Redeem an organization invitation token.
+    pub async fn org_redeem_invitation(&self, token: &str) -> Result<RedeemedOrg> {
+        self.org_request("org/redeem-invitation", &serde_json::json!({ "token": token }))
+            .await
+    }
+
+    /// Delete the current organization.
+    pub async fn org_delete(&self) -> Result<String> {
+        let org_id = self.current_org_id().await?;
+        let _: serde_json::Value = self
+            .org_request("org/delete", &serde_json::json!({ "organization_id": org_id }))
+            .await?;
+        Ok(org_id)
+    }
+
+    /// Leave the current organization.
+    pub async fn org_leave(&self) -> Result<String> {
+        let org_id = self.current_org_id().await?;
+        let _: serde_json::Value = self
+            .org_request("org/leave", &serde_json::json!({ "organization_id": org_id }))
+            .await?;
+        Ok(org_id)
+    }
+
+    /// Remove a member from the current organization.
+    pub async fn org_remove_member(&self, user_id: &str) -> Result<()> {
+        let org_id = self.current_org_id().await?;
+        let _: serde_json::Value = self
+            .org_request(
+                "org/remove-member",
+                &serde_json::json!({
+                    "organization_id": org_id,
+                    "user_id": user_id,
+                }),
+            )
+            .await?;
+        Ok(())
+    }
+
+    /// Add an alert to a workspace (`alert/add`).
+    pub async fn alert_add(
+        &self,
+        tenant: &TenantId,
+        node_id: &str,
+        duration_seconds: u64,
+        webhook_url: &str,
+        webhook_body: &str,
+    ) -> Result<serde_json::Value> {
+        let req = serde_json::json!({
+            "tenant_id": tenant.as_str(),
+            "node_id": node_id,
+            "duration": duration_seconds,
+            "webhook_url": webhook_url,
+            "webhook_body": webhook_body,
+        });
+        self.with_key_retry(tenant, |key| {
+            let req = &req;
+            async move { self.client.request_user(&key, "alert/add", req).await }
+        })
+        .await
+    }
+
+    /// Delete an alert (`alert/delete`).
+    pub async fn alert_delete(&self, tenant: &TenantId, alert_id: &str) -> Result<()> {
+        let req = serde_json::json!({
+            "tenant_id": tenant.as_str(),
+            "alert_id": alert_id,
+        });
+        let _: serde_json::Value = self
+            .with_key_retry(tenant, |key| {
+                let req = &req;
+                async move { self.client.request_user(&key, "alert/delete", req).await }
+            })
+            .await?;
+        Ok(())
+    }
+
+    /// List alerts for a workspace (`alert/list`).
+    pub async fn alert_list(&self, tenant: &TenantId) -> Result<Vec<Alert>> {
+        let req = serde_json::json!({ "tenant_id": tenant.as_str() });
+        let resp: AlertListResponse = self
+            .with_key_retry(tenant, |key| {
+                let req = &req;
+                async move { self.client.request_user(&key, "alert/list", req).await }
+            })
+            .await?;
+        Ok(resp.alerts)
+    }
+
+    /// Redeem an invitation token (`workspace/redeem-invitation`).
+    pub async fn redeem_invitation(&self, token: &str) -> Result<RedeemedWorkspace> {
+        let user_key = self.authenticate().await?;
+        let req = serde_json::json!({ "token": token });
+        self.client
+            .request_user(&user_key, "workspace/redeem-invitation", &req)
+            .await
+    }
+
+    /// Rename a workspace (`rename-tenant`, public endpoint).
+    pub async fn rename_workspace(&self, tenant: &TenantId, name: &str) -> Result<()> {
+        let req = serde_json::json!({
+            "tenant_id": tenant.as_str(),
+            "name": name,
+        });
+        let _: serde_json::Value = self.client.request_public("rename-tenant", &req).await?;
         Ok(())
     }
 

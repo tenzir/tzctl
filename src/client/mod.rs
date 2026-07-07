@@ -20,7 +20,7 @@ use pipelines::{
 };
 use query::{LaunchRequest, LaunchResponse, ResetTtlRequest, ServeRequest, ServeResponse};
 use session::Session;
-pub use session::ClientConfig;
+pub use session::{Alert, ClientConfig, Invitation, InvitationInfo, RedeemedWorkspace};
 
 /// The high-level platform interface the CLI and reconciler depend on.
 ///
@@ -50,6 +50,26 @@ pub trait PlatformClient {
 
     /// Delete a node by id.
     async fn delete_node(&self, workspace: &TenantId, node: &NodeId) -> Result<()>;
+
+    /// Create an invitation for a workspace.
+    async fn create_invitation(
+        &self,
+        workspace: &TenantId,
+        role: &str,
+        label: &str,
+    ) -> Result<Invitation>;
+
+    /// List invitations for a workspace.
+    async fn list_invitations(&self, workspace: &TenantId) -> Result<Vec<InvitationInfo>>;
+
+    /// Revoke a workspace invitation by id.
+    async fn revoke_invitation(&self, workspace: &TenantId, invitation_id: &str) -> Result<()>;
+
+    /// Redeem a workspace invitation token.
+    async fn redeem_invitation(&self, token: &str) -> Result<RedeemedWorkspace>;
+
+    /// Rename a workspace.
+    async fn rename_workspace(&self, workspace: &TenantId, name: &str) -> Result<()>;
 
     /// Resolve a node by id, exact name, or 1-based index from `list_nodes`.
     async fn resolve_node(&self, workspace: &TenantId, query: &str) -> Result<Node> {
@@ -580,6 +600,31 @@ impl PlatformClient for PlatformApi {
         self.session.delete_node(workspace, node.as_str()).await
     }
 
+    async fn create_invitation(
+        &self,
+        workspace: &TenantId,
+        role: &str,
+        label: &str,
+    ) -> Result<Invitation> {
+        self.session.create_invitation(workspace, role, label).await
+    }
+
+    async fn list_invitations(&self, workspace: &TenantId) -> Result<Vec<InvitationInfo>> {
+        self.session.list_invitations(workspace).await
+    }
+
+    async fn revoke_invitation(&self, workspace: &TenantId, invitation_id: &str) -> Result<()> {
+        self.session.revoke_invitation(workspace, invitation_id).await
+    }
+
+    async fn redeem_invitation(&self, token: &str) -> Result<RedeemedWorkspace> {
+        self.session.redeem_invitation(token).await
+    }
+
+    async fn rename_workspace(&self, workspace: &TenantId, name: &str) -> Result<()> {
+        self.session.rename_workspace(workspace, name).await
+    }
+
     async fn node_proxy<T: DeserializeOwned>(
         &self,
         workspace: &TenantId,
@@ -657,6 +702,38 @@ impl PlatformClient for MockClient {
     }
 
     async fn delete_node(&self, _workspace: &TenantId, _node: &NodeId) -> Result<()> {
+        Ok(())
+    }
+
+    async fn create_invitation(
+        &self,
+        _workspace: &TenantId,
+        _role: &str,
+        _label: &str,
+    ) -> Result<Invitation> {
+        Ok(Invitation {
+            invitation_id: "i-mock".to_string(),
+            token: "tok-mock".to_string(),
+        })
+    }
+
+    async fn list_invitations(&self, _workspace: &TenantId) -> Result<Vec<InvitationInfo>> {
+        Ok(Vec::new())
+    }
+
+    async fn revoke_invitation(&self, _workspace: &TenantId, _invitation_id: &str) -> Result<()> {
+        Ok(())
+    }
+
+    async fn redeem_invitation(&self, _token: &str) -> Result<RedeemedWorkspace> {
+        Ok(RedeemedWorkspace {
+            name: Some("mock".to_string()),
+            tenant_id: "t-mock0000".to_string(),
+            role: Some("member".to_string()),
+        })
+    }
+
+    async fn rename_workspace(&self, _workspace: &TenantId, _name: &str) -> Result<()> {
         Ok(())
     }
 

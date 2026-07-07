@@ -3,7 +3,10 @@
 //! `login`/`logout` are implemented; the remaining handlers are stubs that
 //! report "not implemented" until their stage lands.
 
-use super::{AuthCommand, Command, NodeCommand, PipelineCommand, ProjectCommand, WorkspaceCommand};
+use super::{
+    AlertCommand, AuthCommand, Command, NodeCommand, OrgCommand, PipelineCommand, ProjectCommand,
+    WorkspaceCommand,
+};
 use crate::auth::TokenSources;
 use crate::config::ResolvedConfig;
 use crate::error::HintedError;
@@ -63,6 +66,67 @@ pub async fn handle(
             WorkspaceCommand::Select { query } => {
                 zero(super::workspace::select(config, sources, query).await)
             }
+            WorkspaceCommand::Invite { role, label } => zero(
+                super::workspace::invite(config, sources, role, label.as_deref()).await,
+            ),
+            WorkspaceCommand::ListInvitations => {
+                zero(super::workspace::list_invitations(config, sources, output).await)
+            }
+            WorkspaceCommand::RevokeInvitation { invitation_id } => {
+                zero(super::workspace::revoke_invitation(config, sources, invitation_id).await)
+            }
+            WorkspaceCommand::RedeemInvitation { token } => {
+                zero(super::workspace::redeem_invitation(config, sources, token).await)
+            }
+            WorkspaceCommand::Rename { name } => {
+                zero(super::workspace::rename(config, sources, name).await)
+            }
+        },
+        Command::Org(cmd) => match cmd {
+            OrgCommand::Info => zero(super::org::info(config, sources).await),
+            OrgCommand::Create { name } => zero(super::org::create(config, sources, name).await),
+            OrgCommand::CreateWorkspace { name } => {
+                zero(super::org::create_workspace(config, sources, name.as_deref()).await)
+            }
+            OrgCommand::Delete => zero(super::org::delete(config, sources, yes).await),
+            OrgCommand::Invite { role, label } => {
+                zero(super::org::invite(config, sources, role, label.as_deref()).await)
+            }
+            OrgCommand::Leave => zero(super::org::leave(config, sources, yes).await),
+            OrgCommand::ListInvitations => {
+                zero(super::org::list_invitations(config, sources, output).await)
+            }
+            OrgCommand::RevokeInvitation { invitation_id } => {
+                zero(super::org::revoke_invitation(config, sources, invitation_id).await)
+            }
+            OrgCommand::RedeemInvitation { token } => {
+                zero(super::org::redeem_invitation(config, sources, token).await)
+            }
+            OrgCommand::RemoveMember { user_id } => {
+                zero(super::org::remove_member(config, sources, user_id, yes).await)
+            }
+        },
+        Command::Alert(cmd) => match cmd {
+            AlertCommand::Add {
+                node,
+                duration,
+                webhook_url,
+                webhook_body,
+            } => zero(
+                super::alert::add(
+                    config,
+                    sources,
+                    node,
+                    duration,
+                    webhook_url,
+                    webhook_body.as_deref(),
+                )
+                .await,
+            ),
+            AlertCommand::Delete { alert_id } => {
+                zero(super::alert::delete(config, sources, alert_id, yes).await)
+            }
+            AlertCommand::List => zero(super::alert::list(config, sources, output).await),
         },
         Command::Node(cmd) => match cmd {
             NodeCommand::List => zero(super::node::list(config, sources, output).await),
