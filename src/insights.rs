@@ -11,9 +11,10 @@
 //!
 //! - `cpu` is the percentage of one core busy during the tick (100 = one
 //!   full core).
-//! - `events_in/out`, `bytes_in/out`, and `batches_in/out` are per-tick
-//!   deltas over one second, so the latest tick's values are already
-//!   per-second rates.
+//! - `events_in`, `bytes_in`, and `batches_in` are per-tick deltas over one
+//!   second, so the latest tick's values are already per-second rates. We
+//!   report the input side (matching the platform frontend), so throughput
+//!   describes what flows across each operator's input edge.
 //! - `input_bytes` is the current backlog in the operator's input channel
 //!   (bytes pushed upstream but not yet pulled). Channels are capped at
 //!   100 MiB, so the backlog relative to that cap is the queue fullness.
@@ -174,11 +175,11 @@ pub struct OperatorInsights {
     /// Mean percentage of one core busy while the pipeline ran.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cpu_percent: Option<f64>,
-    /// Events per second.
+    /// Input events per second (across the operator's input edge).
     pub events_per_sec: f64,
-    /// Bytes per second.
+    /// Input bytes per second (across the operator's input edge).
     pub bytes_per_sec: f64,
-    /// Batches per second.
+    /// Input batches per second (across the operator's input edge).
     pub batches_per_sec: f64,
     /// Queue backlog and fullness of the operator's input channel.
     pub queue: QueueFullness,
@@ -187,17 +188,15 @@ pub struct OperatorInsights {
 impl OperatorInsights {
     /// Derive an operator's insights from its raw profile row.
     ///
-    /// Throughput uses the operator's output side; operators that produced no
-    /// output but consumed input (sinks) fall back to their input side.
+    /// Throughput uses the operator's *input* side (`events_in`, `bytes_in`,
+    /// `batches_in`), matching the platform frontend: every column then
+    /// describes what flows across the operator's input edge, consistent with
+    /// the input-channel backlog reported by the queue. Reporting the output
+    /// side here instead would disagree with the frontend for operators whose
+    /// input and output rates differ (e.g. `throttle`, `head`, `where`).
     pub fn from_raw(raw: &OperatorProfileRaw) -> Self {
         let v = |x: Option<f64>| x.unwrap_or(0.0);
-        let out_total = v(raw.events_out) + v(raw.bytes_out) + v(raw.batches_out);
-        let in_total = v(raw.events_in) + v(raw.bytes_in) + v(raw.batches_in);
-        let (events, bytes, batches) = if out_total == 0.0 && in_total > 0.0 {
-            (raw.events_in, raw.bytes_in, raw.batches_in)
-        } else {
-            (raw.events_out, raw.bytes_out, raw.batches_out)
-        };
+        let (events, bytes, batches) = (raw.events_in, raw.bytes_in, raw.batches_in);
         let seconds = v(raw.seconds);
         let rate = |total: Option<f64>| {
             if seconds > 0.0 {
@@ -307,7 +306,10 @@ mod tests {
     }
 
     #[test]
-    fn transformation_uses_output_side() {
+    fn throughput_uses_input_side() {
+        // Matches the platform frontend: throughput is the input side, even
+        // when it differs from the output side (as for `throttle`, `head`,
+        // `where`). Output fields are ignored.
         let op = raw(r#"{
                 "operator_id": "1", "name": "where", "cpu": 25.0,
                 "events_in": 8000, "events_out": 6000,
@@ -319,13 +321,14 @@ mod tests {
         let insights = OperatorInsights::from_raw(&op);
         assert_eq!(insights.name.as_deref(), Some("where"));
         assert_eq!(insights.cpu_percent, Some(25.0));
-        assert_eq!(insights.events_per_sec, 100.0);
-        assert_eq!(insights.bytes_per_sec, 200.0);
-        assert_eq!(insights.batches_per_sec, 1.0);
+        // Input side: 8000/60, 16000/60, 80/60 — not the output values.
+        assert_eq!(insights.events_per_sec, 8000.0 / 60.0);
+        assert_eq!(insights.bytes_per_sec, 16000.0 / 60.0);
+        assert_eq!(insights.batches_per_sec, 80.0 / 60.0);
     }
 
     #[test]
-    fn sink_falls_back_to_input_side() {
+    fn sink_uses_input_side() {
         let op = raw(r#"{
                 "operator_id": "2", "name": "import",
                 "events_in": 500, "bytes_in": 1000, "batches_in": 5,
@@ -340,7 +343,7 @@ mod tests {
 
     #[test]
     fn zero_seconds_yields_zero_rates() {
-        let op = raw(r#"{"operator_id": "0", "bytes_out": 1000}"#);
+        let op = raw(r#"{"operator_id": "0", "bytes_in": 1000}"#);
         let insights = OperatorInsights::from_raw(&op);
         assert_eq!(insights.cpu_percent, None);
         assert_eq!(insights.bytes_per_sec, 0.0);
@@ -376,12 +379,12 @@ mod tests {
         let samples: Vec<OperatorSampleRaw> = serde_json::from_str(
             r#"[
                 {"operator_id": "1", "name": "where", "cpu": 20.0,
-                 "events_out": 100, "bytes_out": 200, "batches_out": 1,
+                 "events_in": 100, "bytes_in": 200, "batches_in": 1,
                  "input_bytes": 500},
                 {"operator_id": "0", "name": "src", "cpu": 10.0,
-                 "events_out": 50, "bytes_out": 100, "batches_out": 1},
+                 "events_in": 50, "bytes_in": 100, "batches_in": 1},
                 {"operator_id": "1", "name": "where", "cpu": 40.0,
-                 "events_out": 300, "bytes_out": 600, "batches_out": 3,
+                 "events_in": 300, "bytes_in": 600, "batches_in": 3,
                  "input_bytes": 900}
             ]"#,
         )
@@ -393,7 +396,7 @@ mod tests {
         // Operator "1": only the last tick's values are kept, over 1 s.
         assert_eq!(latest[0].seconds, Some(1.0));
         assert_eq!(latest[0].cpu, Some(40.0));
-        assert_eq!(latest[0].events_out, Some(300.0));
+        assert_eq!(latest[0].events_in, Some(300.0));
         assert_eq!(latest[0].queued_bytes, Some(900.0));
         // The last tick's delta is already the per-second rate.
         let insights = OperatorInsights::from_raw(&latest[0]);
