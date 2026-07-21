@@ -26,6 +26,7 @@ pub async fn handle(
         Command::Auth(cmd) => match cmd {
             AuthCommand::Login(args) => zero(super::auth::login(config, sources, args).await),
             AuthCommand::Logout => zero(super::auth::logout(config, sources).await),
+            AuthCommand::Token => zero(super::auth::token(config, sources).await),
         },
         Command::Pipeline(cmd) => match cmd {
             PipelineCommand::List => zero(super::list::run(config, sources, output).await),

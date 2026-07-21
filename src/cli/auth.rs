@@ -1,4 +1,4 @@
-//! Handlers for `tz auth login` and `tz auth logout`.
+//! Handlers for `tz auth login`, `tz auth logout`, and `tz auth token`.
 
 use owo_colors::OwoColorize;
 
@@ -40,5 +40,15 @@ pub async fn logout(config: &ResolvedConfig, sources: TokenSources) -> Result<()
     } else {
         println!("No cached credentials to remove");
     }
+    Ok(())
+}
+
+/// Handle `tz auth token`.
+pub async fn token(config: &ResolvedConfig, sources: TokenSources) -> Result<(), HintedError> {
+    let authenticator = Authenticator::new(config, sources)?;
+    let token = authenticator.load_id_token().await.map_err(|e| {
+        HintedError::new(e).with_hint("run `tz auth login` to authenticate to the platform")
+    })?;
+    println!("{token}");
     Ok(())
 }

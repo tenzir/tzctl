@@ -178,6 +178,8 @@ pub enum AuthCommand {
     Login(LoginArgs),
     /// Remove cached credentials.
     Logout,
+    /// Print the current auth token.
+    Token,
 }
 
 /// `tz pipeline` subcommands: imperative actions on individual pipelines.
@@ -519,6 +521,8 @@ mod tests {
         assert!(matches!(cli.command, Command::Auth(AuthCommand::Login(_))));
         let cli = Cli::try_parse_from(["tz", "auth", "logout"]).unwrap();
         assert!(matches!(cli.command, Command::Auth(AuthCommand::Logout)));
+        let cli = Cli::try_parse_from(["tz", "auth", "token"]).unwrap();
+        assert!(matches!(cli.command, Command::Auth(AuthCommand::Token)));
     }
 
     #[test]
