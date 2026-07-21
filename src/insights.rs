@@ -249,25 +249,81 @@ pub fn operator_profile_query(pipeline_id: &str) -> String {
     )
 }
 
-/// Parse an operator id into its `[pipeline, operator]` segments.
+/// An instance key within a scatter / gather / broadcast operator.
 ///
-/// Ids look like `517/6-0/0-0/3`: dash-separated segments, each a
-/// `pipeline/operator` pair. The segment list drives tree ordering (compare
-/// segments lexicographically) and nesting depth (`segments.len() - 1`), as in
-/// the platform frontend's insights view. Unparseable ids yield an empty list,
-/// which sorts first at depth zero.
-pub fn operator_id_segments(id: &str) -> Vec<(u64, u64)> {
+/// Numeric instances sort before named ones (e.g. `"out"` sorts last).
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum InstanceKey {
+    Numeric(u64),
+    Named(String),
+}
+
+/// One parsed segment of an operator id.
+///
+/// Supports two id formats:
+/// - `{pipeline}/{operator}` pairs separated by `-` (sub-pipeline nesting)
+/// - `{pipeline}/{operator}#{name}/{instance}` (scatter / gather / broadcast)
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct OperatorIdSegment {
+    pub pipeline_id: u64,
+    pub operator_id: u64,
+    /// Present when the id carries a `#name/instance` suffix.
+    /// Numeric instances sort before named ones (e.g. `"out"`).
+    pub instance: Option<InstanceKey>,
+}
+
+/// Parse an operator id into its ordered segments.
+///
+/// Two id formats are supported:
+///
+/// - `517/6-0/0-0/3` — dash-separated `pipeline/operator` pairs used for
+///   sub-pipeline nesting.  Each pair becomes one segment; depth is
+///   `segments.len() - 1`.
+/// - `168/4#broadcast/2` — a single `pipeline/operator` base with a
+///   `#name/instance` suffix used by scatter / gather / broadcast operators.
+///   The suffix becomes the `instance` field; depth counts as 1.
+///
+/// Unparseable ids yield an empty list (sorts first, depth 0).
+pub fn operator_id_segments(id: &str) -> Vec<OperatorIdSegment> {
     id.split('-')
         .filter_map(|seg| {
-            let (pipeline, operator) = seg.split_once('/')?;
-            Some((pipeline.parse().ok()?, operator.parse().ok()?))
+            // Split off a `#name/instance` suffix if present.
+            let (base, instance) = match seg.split_once('#') {
+                Some((base, inst_part)) => {
+                    let key = inst_part.split_once('/').and_then(|(_name, inst)| {
+                        if let Ok(n) = inst.parse::<u64>() {
+                            Some(InstanceKey::Numeric(n))
+                        } else {
+                            Some(InstanceKey::Named(inst.to_string()))
+                        }
+                    });
+                    (base, key)
+                }
+                None => (seg, None),
+            };
+            let (pipeline, operator) = base.split_once('/')?;
+            Some(OperatorIdSegment {
+                pipeline_id: pipeline.parse().ok()?,
+                operator_id: operator.parse().ok()?,
+                instance,
+            })
         })
         .collect()
 }
 
 /// The nesting depth of an operator id (0 for top-level operators).
+///
+/// Sub-pipeline nesting adds one level per extra `pipeline/operator` pair.
+/// A `#name/instance` suffix on the last segment also adds one level, since
+/// each instance is a child of its parent operator.
 pub fn operator_depth(id: &str) -> usize {
-    operator_id_segments(id).len().saturating_sub(1)
+    let segs = operator_id_segments(id);
+    let base = segs.len().saturating_sub(1);
+    let instance_depth = segs
+        .last()
+        .map(|s| usize::from(s.instance.is_some()))
+        .unwrap_or(0);
+    base + instance_depth
 }
 
 /// Format an event or batch count into a compact SI string (e.g. `1.2M`).
@@ -406,14 +462,43 @@ mod tests {
 
     #[test]
     fn id_segments_parse_and_order() {
-        assert_eq!(operator_id_segments("517/4"), vec![(517, 4)]);
+        // Plain `pipeline/operator` format.
+        assert_eq!(
+            operator_id_segments("517/4"),
+            vec![OperatorIdSegment { pipeline_id: 517, operator_id: 4, instance: None }]
+        );
+        // Dash-separated sub-pipeline nesting.
         assert_eq!(
             operator_id_segments("517/6-0/0-0/3"),
-            vec![(517, 6), (0, 0), (0, 3)]
+            vec![
+                OperatorIdSegment { pipeline_id: 517, operator_id: 6, instance: None },
+                OperatorIdSegment { pipeline_id: 0, operator_id: 0, instance: None },
+                OperatorIdSegment { pipeline_id: 0, operator_id: 3, instance: None },
+            ]
+        );
+        // Scatter / gather / broadcast instance format.
+        assert_eq!(
+            operator_id_segments("168/4#broadcast/2"),
+            vec![OperatorIdSegment {
+                pipeline_id: 168,
+                operator_id: 4,
+                instance: Some(InstanceKey::Numeric(2)),
+            }]
+        );
+        assert_eq!(
+            operator_id_segments("168/25#gather/out"),
+            vec![OperatorIdSegment {
+                pipeline_id: 168,
+                operator_id: 25,
+                instance: Some(InstanceKey::Named("out".to_string())),
+            }]
         );
         // Depth is the number of nested sub-pipelines.
         assert_eq!(operator_depth("517/4"), 0);
         assert_eq!(operator_depth("517/6-0/0-0/3"), 2);
+        // A #name/instance suffix adds one depth level.
+        assert_eq!(operator_depth("168/4#broadcast/2"), 1);
+        assert_eq!(operator_depth("168/25#gather/out"), 1);
         // Unparseable ids degrade gracefully.
         assert_eq!(operator_id_segments("bogus"), vec![]);
         assert_eq!(operator_depth("bogus"), 0);
@@ -422,6 +507,26 @@ mod tests {
         let mut ids = ["517/10", "517/2"];
         ids.sort_by_key(|id| operator_id_segments(id));
         assert_eq!(ids, ["517/2", "517/10"]);
+        // Numeric instances sort before named ones; instances of the same
+        // operator sort together and in numeric order.
+        let mut ids = [
+            "168/25#gather/out",
+            "168/25#gather/31",
+            "168/4#broadcast/2",
+            "168/25#gather/2",
+            "168/20#scatter/1",
+        ];
+        ids.sort_by_key(|id| operator_id_segments(id));
+        assert_eq!(
+            ids,
+            [
+                "168/4#broadcast/2",
+                "168/20#scatter/1",
+                "168/25#gather/2",
+                "168/25#gather/31",
+                "168/25#gather/out",
+            ]
+        );
     }
 
     #[test]

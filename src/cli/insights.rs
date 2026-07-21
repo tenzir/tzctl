@@ -154,6 +154,7 @@ fn render_text_with_label(insights: &PipelineInsights, label: &str) -> String {
     // The cpu header is padded to 6 chars so the column fits values like
     // `123.4%` without resizing between watch frames.
     let mut table = Table::new([
+        "id",
         "name",
         "cpu   ",
         "events/s",
@@ -161,16 +162,17 @@ fn render_text_with_label(insights: &PipelineInsights, label: &str) -> String {
         "batches/s",
         "queue",
     ])
-    .align(2, Align::Right)
     .align(3, Align::Right)
     .align(4, Align::Right)
     .align(5, Align::Right)
-    .align(6, Align::Right);
+    .align(6, Align::Right)
+    .align(7, Align::Right);
     for op in &insights.operators {
         // Indent the name by nesting depth to convey the sub-pipeline tree.
         let indent = "  ".repeat(operator_depth(&op.operator_id));
         let name = op.name.as_deref().unwrap_or("-");
         table.row([
+            op.operator_id.clone(),
             format!("{indent}{name}"),
             render_cpu(op.cpu_percent),
             dim_if_zero(format_count(op.events_per_sec), op.events_per_sec),
