@@ -48,8 +48,8 @@ pub async fn handle(
             PipelineCommand::Status { name, range, limit } => {
                 zero(super::status::run(config, sources, output, name, *range, *limit).await)
             }
-            PipelineCommand::Insights { name, watch } => {
-                zero(super::insights::run(config, sources, output, name, *watch).await)
+            PipelineCommand::Insights { name, watch, full } => {
+                zero(super::insights::run(config, sources, output, name, *watch, *full).await)
             }
         },
         Command::Run(args) => zero(super::run::run(config, sources, output, args).await),

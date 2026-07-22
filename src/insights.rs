@@ -71,6 +71,9 @@ pub struct OperatorSampleRaw {
     /// Current input-channel backlog in bytes.
     #[serde(default)]
     pub input_bytes: Option<f64>,
+    /// The input channel's capacity in bytes, when reported by the node.
+    #[serde(default)]
+    pub input_capacity: Option<f64>,
 }
 
 /// Reduce raw per-tick samples to the latest sample per operator.
@@ -101,6 +104,7 @@ pub fn latest_samples(samples: &[OperatorSampleRaw]) -> Vec<OperatorProfileRaw> 
                 batches_out: s.batches_out,
                 queued_bytes: backlog,
                 peak_queued_bytes: backlog,
+                capacity_bytes: s.input_capacity,
                 // Each sample spans one metrics tick (1 s).
                 seconds: Some(1.0),
             },
@@ -148,6 +152,9 @@ pub struct OperatorProfileRaw {
     /// Peak input-channel backlog in bytes over the range.
     #[serde(default)]
     pub peak_queued_bytes: Option<f64>,
+    /// The input channel's capacity in bytes, when reported by the node.
+    #[serde(default)]
+    pub capacity_bytes: Option<f64>,
     /// The number of 1-second metric ticks observed in the range.
     #[serde(default)]
     pub seconds: Option<f64>,
@@ -160,6 +167,8 @@ pub struct QueueFullness {
     pub queued_bytes: f64,
     /// Peak queued bytes over the range.
     pub peak_queued_bytes: f64,
+    /// The channel capacity in bytes used to compute fullness.
+    pub capacity_bytes: f64,
     /// Current fullness as a percentage of the channel capacity (0–100).
     pub fullness_percent: f64,
 }
@@ -206,6 +215,12 @@ impl OperatorInsights {
             }
         };
         let queued_bytes = v(raw.queued_bytes);
+        // Prefer the node-reported channel capacity; fall back to the default
+        // when it is absent or non-positive.
+        let capacity_bytes = match raw.capacity_bytes {
+            Some(c) if c > 0.0 => c,
+            _ => CHANNEL_CAPACITY_BYTES,
+        };
         Self {
             operator_id: raw.operator_id.clone(),
             name: raw.name.clone(),
@@ -216,7 +231,8 @@ impl OperatorInsights {
             queue: QueueFullness {
                 queued_bytes,
                 peak_queued_bytes: v(raw.peak_queued_bytes),
-                fullness_percent: queued_bytes / CHANNEL_CAPACITY_BYTES * 100.0,
+                capacity_bytes,
+                fullness_percent: queued_bytes / capacity_bytes * 100.0,
             },
         }
     }
@@ -415,6 +431,37 @@ mod tests {
         let insights = OperatorInsights::from_raw(&op);
         assert_eq!(insights.queue.fullness_percent, 50.0);
         assert_eq!(insights.queue.peak_queued_bytes, 104857600.0);
+        assert_eq!(insights.queue.capacity_bytes, CHANNEL_CAPACITY_BYTES);
+    }
+
+    #[test]
+    fn queue_fullness_uses_reported_capacity() {
+        // A reported `capacity_bytes` (from the node's `input_capacity`)
+        // overrides the default channel capacity.
+        let op = OperatorProfileRaw {
+            operator_id: "1".to_string(),
+            queued_bytes: Some(25_000_000.0),
+            peak_queued_bytes: Some(25_000_000.0),
+            capacity_bytes: Some(50_000_000.0),
+            seconds: Some(1.0),
+            ..Default::default()
+        };
+        let insights = OperatorInsights::from_raw(&op);
+        assert_eq!(insights.queue.capacity_bytes, 50_000_000.0);
+        assert_eq!(insights.queue.fullness_percent, 50.0);
+    }
+
+    #[test]
+    fn input_capacity_propagates_from_sample() {
+        let samples: Vec<OperatorSampleRaw> = serde_json::from_str(
+            r#"[{"operator_id": "1", "input_bytes": 10, "input_capacity": 40}]"#,
+        )
+        .unwrap();
+        let folded = latest_samples(&samples);
+        assert_eq!(folded[0].capacity_bytes, Some(40.0));
+        let insights = OperatorInsights::from_raw(&folded[0]);
+        assert_eq!(insights.queue.capacity_bytes, 40.0);
+        assert_eq!(insights.queue.fullness_percent, 25.0);
     }
 
     #[test]

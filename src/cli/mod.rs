@@ -232,6 +232,9 @@ pub enum PipelineCommand {
         /// Render live insights as new metrics arrive, until Ctrl-C.
         #[arg(long)]
         watch: bool,
+        /// Show additional columns (operator id and input capacity).
+        #[arg(long)]
+        full: bool,
     },
 }
 

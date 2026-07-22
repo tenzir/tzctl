@@ -8,9 +8,8 @@ use crate::client::PlatformClient;
 use crate::config::ResolvedConfig;
 use crate::error::HintedError;
 use crate::insights::{
-    CHANNEL_CAPACITY_BYTES, OperatorInsights, OperatorSampleRaw, PipelineInsights, SAMPLE_WINDOW,
-    format_bytes_rate, format_count, latest_samples, operator_depth, operator_id_segments,
-    operator_profile_query,
+    OperatorInsights, OperatorSampleRaw, PipelineInsights, SAMPLE_WINDOW, format_bytes_rate,
+    format_count, latest_samples, operator_depth, operator_id_segments, operator_profile_query,
 };
 use crate::output::{self, OutputMode};
 use crate::status::format_bytes;
@@ -23,6 +22,7 @@ pub async fn run(
     output: OutputMode,
     name: &str,
     watch: bool,
+    full: bool,
 ) -> Result<(), HintedError> {
     let (workspace, node) = super::resolve_target(config)?;
     let client = super::platform_client(config, sources).await?;
@@ -53,7 +53,7 @@ pub async fn run(
                     }
                 }
                 let insights = build_insights(&pipeline, &samples);
-                render_watch_frame(output, &insights)
+                render_watch_frame(output, &insights, full)
                     .map_err(|e| crate::error::Error::Other(e.into()))?;
                 Ok(())
             })
@@ -68,7 +68,7 @@ pub async fn run(
         .map_err(super::list::disconnected_hint)?;
     let insights = build_insights(&pipeline, &parse_samples(events));
 
-    output::render(output, &insights, || render_text(&insights))
+    output::render(output, &insights, || render_text(&insights, full))
         .map_err(|e| HintedError::new(crate::error::Error::Other(e.into())))?;
     Ok(())
 }
@@ -111,7 +111,11 @@ fn build_insights(
 /// Text mode clears the screen and redraws the table in place (like
 /// `watch(1)`); JSON mode emits one document per update so the output remains
 /// machine-consumable as a stream.
-fn render_watch_frame(output: OutputMode, insights: &PipelineInsights) -> std::io::Result<()> {
+fn render_watch_frame(
+    output: OutputMode,
+    insights: &PipelineInsights,
+    full: bool,
+) -> std::io::Result<()> {
     if output == OutputMode::Text {
         // Clear the screen and move the cursor home before redrawing.
         print!("\x1b[2J\x1b[H");
@@ -119,22 +123,26 @@ fn render_watch_frame(output: OutputMode, insights: &PipelineInsights) -> std::i
     output::render(output, insights, || {
         format!(
             "{}\n\n{}",
-            render_text_with_label(insights, "live"),
+            render_text_with_label(insights, "live", full),
             "(watching; Ctrl-C to exit)".dimmed()
         )
     })
 }
 
 /// Render the insights as human-readable text.
-fn render_text(insights: &PipelineInsights) -> String {
+fn render_text(insights: &PipelineInsights, full: bool) -> String {
     render_text_with_label(
         insights,
         &format!("{}s live sample", SAMPLE_WINDOW.as_secs()),
+        full,
     )
 }
 
 /// Render the insights as human-readable text with a custom sample label.
-fn render_text_with_label(insights: &PipelineInsights, label: &str) -> String {
+///
+/// With `full`, additional columns are shown: the operator id and the input
+/// channel capacity.
+fn render_text_with_label(insights: &PipelineInsights, label: &str, full: bool) -> String {
     let mut out = String::new();
 
     // Header.
@@ -152,27 +160,31 @@ fn render_text_with_label(insights: &PipelineInsights, label: &str) -> String {
     }
 
     // The cpu header is padded to 6 chars so the column fits values like
-    // `123.4%` without resizing between watch frames.
-    let mut table = Table::new([
-        "id",
-        "name",
-        "cpu   ",
-        "events/s",
-        "bytes/s",
-        "batches/s",
-        "queue",
-    ])
-    .align(3, Align::Right)
-    .align(4, Align::Right)
-    .align(5, Align::Right)
-    .align(6, Align::Right)
-    .align(7, Align::Right);
+    // `123.4%` without resizing between watch frames. The `id` and `capacity`
+    // columns only appear with `--full`.
+    let mut headers: Vec<&str> = Vec::new();
+    if full {
+        headers.push("id");
+    }
+    headers.extend(["name", "cpu   ", "events/s", "bytes/s", "batches/s", "queue"]);
+    if full {
+        headers.push("capacity");
+    }
+    // Right-align every numeric column (all but `name`, which follows `id`).
+    let name_col = usize::from(full);
+    let mut table = Table::new(headers);
+    for col in (name_col + 1)..(name_col + 6) {
+        table = table.align(col, Align::Right);
+    }
     for op in &insights.operators {
         // Indent the name by nesting depth to convey the sub-pipeline tree.
         let indent = "  ".repeat(operator_depth(&op.operator_id));
         let name = op.name.as_deref().unwrap_or("-");
-        table.row([
-            op.operator_id.clone(),
+        let mut cells: Vec<String> = Vec::new();
+        if full {
+            cells.push(op.operator_id.clone());
+        }
+        cells.extend([
             format!("{indent}{name}"),
             render_cpu(op.cpu_percent),
             dim_if_zero(format_count(op.events_per_sec), op.events_per_sec),
@@ -180,6 +192,10 @@ fn render_text_with_label(insights: &PipelineInsights, label: &str) -> String {
             dim_if_zero(format!("{:.1}", op.batches_per_sec), op.batches_per_sec),
             render_queue(op),
         ]);
+        if full {
+            cells.push(format_bytes(op.queue.capacity_bytes));
+        }
+        table.row(cells);
     }
     out.push_str(&table.render());
 
@@ -221,15 +237,15 @@ fn render_cpu(cpu_percent: Option<f64>) -> String {
 
 /// Render an operator's queue cell as its current backlog in bytes.
 ///
-/// An empty queue renders as a dimmed `0`; a backlog beyond the 100 MiB
-/// channel capacity is red.
+/// An empty queue renders as a dimmed `0`; a backlog beyond the channel
+/// capacity is red.
 fn render_queue(op: &OperatorInsights) -> String {
     let q = &op.queue;
     if q.queued_bytes == 0.0 && q.peak_queued_bytes == 0.0 {
         return "0".dimmed().to_string();
     }
     let cell = format_bytes(q.queued_bytes);
-    if q.queued_bytes > CHANNEL_CAPACITY_BYTES {
+    if q.queued_bytes > q.capacity_bytes {
         cell.red().to_string()
     } else {
         cell
